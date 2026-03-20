@@ -1,5 +1,5 @@
 """
-ProgressAI — Student Performance Prediction API
+AcademicAI — Student Performance Prediction API
 ================================================
 Author  : Mohammad Umar — B.Tech CSE
 Dataset : UCI Student Performance (Math) — student-mat.csv
@@ -64,7 +64,7 @@ load_model_artifacts()
 
 # ─── FastAPI app ──────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="ProgressAI — Student Performance API",
+    title="AcademicAI — Student Performance API",
     description="Predicts whether a student will Pass, Fail, or be At-Risk based on academic and personal background.",
     version="2.0.0"
 )
@@ -73,7 +73,7 @@ app = FastAPI(
 # For production, replace "*" with your actual Vercel URL.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],          # e.g. ["https://progressai.vercel.app"]
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -190,7 +190,7 @@ def encode_input(data: StudentInput) -> pd.DataFrame:
 def root():
     """Returns API status and model accuracy."""
     return {
-        "status":         "✅ ProgressAI API is running!",
+        "status":         "✅ AcademicAI API is running!",
         "model":          metadata["model_type"],
         "accuracy":       f"{metadata['accuracy'] * 100:.1f}%",
         "cv_accuracy":    f"{metadata['cv_accuracy'] * 100:.1f}%",
