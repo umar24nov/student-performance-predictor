@@ -10,12 +10,12 @@ function smoothScrollTo(id) {
   window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 72, behavior: "smooth" });
 }
 
-async function saveResponse(answers, result) {
+async function saveResponse(payload, result) {
   try {
     await fetch(`${API_URL}/save-response`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        answers, prediction: result.prediction, confidence: result.confidence,
+        features: payload, prediction: result.prediction, confidence: result.confidence,
         confidence_scores: result.confidence_scores, timestamp: new Date().toISOString(),
       }),
     });
@@ -122,18 +122,19 @@ const BASE_QUESTIONS = [
   { id:"Fjob", section:"Family Background", icon:"👨‍💼", q:"What is your father's occupation?",
     type:"choice", cols:2, options:[
       {v:"teacher",l:"Teacher / Lecturer",e:"👨‍🏫"},{v:"health",l:"Healthcare / Doctor",e:"🏥"},
-      {v:"services",l:"Govt / Civil Services",e:"🏛️"},{v:"other",l:"Farmer / Agriculture",e:"🌾"},
-      {v:"at_home",l:"Business / Private",e:"💼"}] },
+      {v:"services",l:"Govt / Civil Services",e:"🏛️"},{v:"at_home",l:"Homemaker",e:"🏠"},
+      {v:"other",l:"Business / Agriculture / Other",e:"💼"}] },
 
   { id:"studytime", section:"Academics", icon:"📖", q:"How many hours do you study per week (outside class)?",
     type:"choice", cols:2, options:[
       {v:"1",l:"Less than 2 hours",e:"😬"},{v:"2",l:"2–5 hours",e:"📚"},
       {v:"3",l:"5–10 hours",e:"💡"},{v:"4",l:"More than 10 hours",e:"🌟"}] },
 
-  { id:"failures", section:"Academics", icon:"📉", q:"How many courses / subjects have you failed before?",
+  { id:"failures", section:"Academics", icon:"📚", q:"Have you ever had to repeat a subject?",
+    hint:"University exams only — 0 is perfectly normal",
     type:"choice", cols:4, options:[
-      {v:"0",l:"None",e:"✅"},{v:"1",l:"1",e:"1️⃣"},
-      {v:"2",l:"2",e:"2️⃣"},{v:"3",l:"3 or more",e:"⚠️"}] },
+      {v:"0",l:"No repeats",e:"✅"},{v:"1",l:"1 subject",e:"1️⃣"},
+      {v:"2",l:"2 subjects",e:"2️⃣"},{v:"3",l:"3 or more",e:"3️⃣"}] },
 
   { id:"attendance", section:"Academics", icon:"🏫", q:"What is your attendance percentage this year?",
     type:"choice", cols:2, options:[
@@ -143,11 +144,18 @@ const BASE_QUESTIONS = [
 
 // ─── Tail questions (always shown after grades) ───────────────────────────────
 const TAIL_QUESTIONS = [
-  { id:"higher", section:"Future Plans", icon:"🎓", q:"Do you plan to pursue higher education after this?",
+  { id:"schoolsup", section:"Support", icon:"🎯", q:"Do you get extra academic support like private tutoring?",
+    hint:"Coaching classes, personal tutor, or remedial sessions",
     type:"yesno" },
-  { id:"internet", section:"Support", icon:"🌐", q:"Do you have reliable internet access at home?",
+  { id:"famsup", section:"Support", icon:"👨‍👩‍👧", q:"Does your family actively support your studies?",
+    hint:"Encouraging your education, helping with fees or study materials",
     type:"yesno" },
-  { id:"health", section:"About You", icon:"💪", q:"How is your health these days?",
+  { id:"internet", section:"Well-being", icon:"🏠", q:"Do you have a quiet place to study at home?",
+    hint:"A distraction-free space for focused study",
+    type:"yesno" },
+  { id:"higher", section:"Goals", icon:"🎯", q:"Do you plan to pursue a master's degree or further studies?",
+    type:"yesno" },
+  { id:"health", section:"Well-being", icon:"💪", q:"How is your health these days?",
     type:"choice", cols:3, options:[
       {v:"1",l:"Very poor",e:"🤒"},{v:"2",l:"Below average",e:"😔"},
       {v:"3",l:"Average",e:"😐"},{v:"4",l:"Good",e:"🙂"},{v:"5",l:"Excellent",e:"💪"}] },
@@ -173,14 +181,14 @@ function buildQuestions(answers) {
     // Just entered university — ask about Intermediate / 12th marks as reference
     questions.push({
       id: "interGrade", section: "Your Grades", icon: "🏫",
-      q: "What were your marks in Intermediate / 12th Board?",
-      hint: "Pick the closest range — marks out of 10 (e.g. 75% ≈ 7–8)",
+      q: "What was your average grade in your last qualifying exam?",
+      hint: "12th Board / Intermediate — pick the closest range (e.g. 75% ≈ 7–8 out of 10)",
       type: "choice", cols: 3, options: GRADE_OPTIONS,
     });
     questions.push({
       id: "prevGrade", section: "Your Grades", icon: "📖",
-      q: "What was your overall academic performance before university?",
-      hint: "Think of your 10th standard / CBSE / ICSE result",
+      q: "How would you describe your overall academics before university?",
+      hint: "Think of your 10th / 12th standard performance",
       type: "choice", cols: 3, options: GRADE_OPTIONS,
     });
   } else {
@@ -188,8 +196,8 @@ function buildQuestions(answers) {
     // Sem 1 grade — always required
     questions.push({
       id: "G1", section: "Your Grades", icon: "📝",
-      q: "What were your marks in Semester 1?",
-      hint: "Pick the closest range — marks out of 10",
+      q: "What was your average grade in Semester 1?",
+      hint: "Pick the closest range (e.g. 75% ≈ 7–8 out of 10)",
       type: "choice", cols: 3, options: GRADE_OPTIONS,
     });
 
@@ -197,8 +205,8 @@ function buildQuestions(answers) {
     if (sem >= 2) {
       questions.push({
         id: "G2", section: "Your Grades", icon: "📊",
-        q: "What were your marks in Semester 2?",
-        hint: "Pick the closest range — marks out of 10",
+        q: "What was your average grade in Semester 2?",
+        hint: "Pick the closest range (e.g. 75% ≈ 7–8 out of 10)",
         type: "choice", cols: 3, options: GRADE_OPTIONS,
       });
     }
@@ -211,7 +219,7 @@ function buildQuestions(answers) {
       const semNum = i + 3;
       questions.push({
         id: `G${semNum}extra`, section: "Your Grades", icon: semIcons[i],
-        q: `What were your marks in Semester ${semLabels[i]}?`,
+        q: `What was your average grade in Semester ${semLabels[i]}?`,
         hint: "Optional — skip if you don't remember",
         type: "choice", cols: 3, options: GRADE_OPTIONS,
         optional: true,
@@ -537,7 +545,7 @@ export default function App() {
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `Error ${res.status}`); }
       const data = await res.json();
       setResult(data);
-      await saveResponse(answers, data);
+      await saveResponse(payload, data);
       setPage("result");
     } catch(e) { setError(e.message); }
     finally    { setLoading(false); }

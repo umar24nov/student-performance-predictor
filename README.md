@@ -235,7 +235,14 @@ Open **http://localhost:5173** in your browser — AcademicAI is running! 🎉
 |----------------|-------------------------|----------------------------|
 | `VITE_API_URL` | `http://127.0.0.1:8000` | URL of the FastAPI backend |
 
-> For production, replace this with your deployed backend URL (e.g. your Railway URL).
+### Backend environment variables (Railway / hosting)
+
+| Variable         | Default                          | Description                              |
+|------------------|----------------------------------|------------------------------------------|
+| `ALLOWED_ORIGINS`| `http://localhost:5173,http://localhost:3000` | Comma-separated allowed frontend URLs |
+| `RETRAIN_API_KEY`| *(empty — open)*                 | If set, `/retrain` requires this key     |
+
+> For production, set `ALLOWED_ORIGINS` to your Vercel URL and `RETRAIN_API_KEY` to protect the retraining endpoint.
 
 ---
 
@@ -277,7 +284,7 @@ All endpoints are served at `http://127.0.0.1:8000`
 | GET    | `/`              | Health check — returns model version and accuracy         |
 | POST   | `/predict`       | Submit student features, receive prediction + confidence  |
 | POST   | `/save-response` | Save anonymised quiz response for future retraining       |
-| POST   | `/retrain`       | Trigger background model retraining with saved responses  |
+| POST   | `/retrain`       | Trigger model retraining (set `RETRAIN_API_KEY` env var to protect) |
 | GET    | `/model-info`    | Returns model metadata (accuracy, features, training date)|
 | GET    | `/stats`         | Returns count of collected student responses              |
 
@@ -337,6 +344,7 @@ All endpoints are served at `http://127.0.0.1:8000`
   "tip": "You're on a great track! Keep up your attendance and study consistency.",
   "emoji": "🎓",
   "model_accuracy": "81%",
+  "cv_accuracy": "86.8%",
   "dataset_size": 395
 }
 ```
@@ -373,6 +381,10 @@ Medu (mother's edu.)   ██                     5.2%
 
 **Option 1 — via API (runs in background):**
 ```bash
+# If RETRAIN_API_KEY is set, include it as a query parameter:
+curl -X POST "http://127.0.0.1:8000/retrain?api_key=YOUR_KEY"
+
+# If no API key is configured, just call:
 curl -X POST http://127.0.0.1:8000/retrain
 ```
 
@@ -410,21 +422,13 @@ jupyter notebook train_model.ipynb
 
 ### After Deploying — Update CORS
 
-In `backend/main.py`, add your Vercel URL to `allow_origins`:
+Set the `ALLOWED_ORIGINS` environment variable on your backend (Railway):
 
-```python
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "https://your-app.vercel.app",  # ← add your Vercel URL
-    ],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+```
+ALLOWED_ORIGINS=https://your-app.vercel.app,http://localhost:5173
 ```
 
-Redeploy the backend after this change.
+This replaces the default `localhost:5173` with your actual frontend URL. Redeploy the backend after this change.
 
 ---
 

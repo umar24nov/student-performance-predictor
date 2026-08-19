@@ -9,7 +9,7 @@ Endpoints:
   GET  /              → health check
   POST /predict       → predict student performance
   POST /save-response → save anonymous quiz response
-  POST /retrain       → retrain model with collected responses
+  POST /retrain       → retrain model with collected responses (requires API key)
   GET  /model-info    → model metadata and stats
   GET  /stats         → collected response statistics
 """
@@ -21,7 +21,7 @@ from typing import Any, Dict, Optional
 import joblib
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -39,9 +39,20 @@ METADATA_PATH  = os.path.join(BASE_DIR, "model_metadata.json")
 RESPONSES_PATH = os.path.join(BASE_DIR, "student_responses.csv")
 ORIGINAL_DATA  = os.path.join(BASE_DIR, "..", "data", "student-mat.csv")
 
+# ─── Config ───────────────────────────────────────────────────────────────────
+ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000").split(",")
+    if o.strip()
+]
+RETRAIN_API_KEY = os.getenv("RETRAIN_API_KEY", "")
+
+NUMERIC_COLS = [
+    'age', 'Medu', 'Fedu', 'traveltime', 'studytime', 'failures',
+    'famrel', 'freetime', 'goout', 'Dalc', 'Walc', 'health', 'absences', 'G1', 'G2',
+]
+
 # ─── Load model artifacts ─────────────────────────────────────────────────────
-# All files are saved by the Jupyter notebook during training.
-# If you retrain, just re-run the notebook and restart this server.
 def load_model_artifacts():
     """Load all ML artifacts from disk. Called on startup and after retraining."""
     global model, scaler, target_encoder, label_encoders, metadata, FEATURES, CATEGORICAL_COLS
@@ -66,14 +77,13 @@ load_model_artifacts()
 app = FastAPI(
     title="AcademicAI — Student Performance API",
     description="Predicts whether a student will Pass, Fail, or be At-Risk based on academic and personal background.",
-    version="2.0.0"
+    version="2.1.0"
 )
 
-# Allow the React frontend to call this API from any origin.
-# For production, replace "*" with your actual Vercel URL.
+# CORS — set ALLOWED_ORIGINS env var for production (comma-separated)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -85,13 +95,10 @@ class StudentInput(BaseModel):
     """
     All features a student provides through the quiz.
     Each field maps directly to a column in the training dataset.
-    
-    ── To add new fields when you replace the dataset: ──
-    Add new fields here and update the feature encoding section in /predict.
     """
     # Personal background
     sex:        str  = Field(..., description="M or F")
-    age:        int  = Field(..., ge=15, le=25)
+    age:        int  = Field(..., ge=15, le=35)
     address:    str  = Field(..., description="U=urban, R=rural")
     famsize:    str  = Field(..., description="GT3 or LE3")
     Pstatus:    str  = Field(..., description="T=together, A=apart")
@@ -134,8 +141,8 @@ class StudentInput(BaseModel):
 
 
 class SaveResponseRequest(BaseModel):
-    """Anonymous user response saved for future retraining."""
-    answers:           Dict[str, Any]
+    """Anonymous user response — numeric features used for model retraining."""
+    features:          Dict[str, Any]
     prediction:        str
     confidence:        float
     confidence_scores: Dict[str, float]
@@ -149,7 +156,6 @@ def encode_input(data: StudentInput) -> pd.DataFrame:
     Convert StudentInput into a scaled DataFrame ready for model.predict().
     Applies the same label encoders and scaler used during training.
     """
-    # Build raw dict from pydantic model
     raw = {
         'sex': data.sex, 'age': data.age, 'address': data.address,
         'famsize': data.famsize, 'Pstatus': data.Pstatus,
@@ -167,20 +173,15 @@ def encode_input(data: StudentInput) -> pd.DataFrame:
 
     df = pd.DataFrame([raw])
 
-    # Apply label encoding to categorical columns
     for col in CATEGORICAL_COLS:
         if col in label_encoders:
             try:
                 df[col] = label_encoders[col].transform(df[col])
             except ValueError:
-                # Unknown category — use most common class (0)
                 log.warning(f"Unknown value for {col}: {df[col].values[0]}, defaulting to 0")
                 df[col] = 0
 
-    # Reorder to match training column order
     df = df[FEATURES]
-
-    # Scale
     return scaler.transform(df)
 
 
@@ -206,30 +207,26 @@ def predict(data: StudentInput):
     - prediction: Pass / Fail / At-Risk
     - confidence: % confidence in top prediction
     - confidence_scores: % for all three classes
-    - tips: personalised advice based on outcome
+    - tip: personalised advice based on outcome
     """
     try:
         X_scaled = encode_input(data)
 
-        # Get prediction and probabilities
         pred_encoded  = model.predict(X_scaled)[0]
         probabilities = model.predict_proba(X_scaled)[0]
         pred_class    = target_encoder.inverse_transform([pred_encoded])[0]
 
-        # All class probabilities
         confidence_scores = {
             cls: round(float(prob) * 100, 1)
             for cls, prob in zip(target_encoder.classes_, probabilities)
         }
 
-        # Personalised tip per outcome
         tips = {
-            "Pass":    "Great foundation! Maintain your attendance, clear any pending fees, and keep reviewing consistently. You're on the right path. 🎓",
-            "Fail":    "Don't give up — this is a warning, not a verdict. Focus on reducing absences, increasing study time, and seeking help from teachers. Change is possible now. 💪",
-            "At-Risk": "Urgent: your profile matches students who have withdrawn or failed critically. Please speak with your academic advisor immediately. Consider scholarship options and attend every class. 🚨",
+            "Pass":    "Great foundation! Maintain your attendance, clear any pending fees, and keep reviewing consistently. You're on the right path.",
+            "Fail":    "Don't give up — this is a warning, not a verdict. Focus on reducing absences, increasing study time, and seeking help from teachers. Change is possible now.",
+            "At-Risk": "Urgent: your profile matches students who have withdrawn or failed critically. Please speak with your academic advisor immediately. Consider scholarship options and attend every class.",
         }
 
-        # Emoji per outcome
         emojis = {"Pass": "🎓", "Fail": "📉", "At-Risk": "⚠️"}
 
         log.info(f"Prediction: {pred_class} ({confidence_scores[pred_class]}%)")
@@ -242,6 +239,7 @@ def predict(data: StudentInput):
             "tip":               tips.get(pred_class, ""),
             "model_accuracy":    f"{metadata['accuracy'] * 100:.1f}%",
             "cv_accuracy":       f"{metadata['cv_accuracy'] * 100:.1f}%",
+            "dataset_size":      metadata["dataset_size"],
         }
 
     except Exception as e:
@@ -252,26 +250,29 @@ def predict(data: StudentInput):
 @app.post("/save-response", summary="Save anonymous user response")
 def save_response(data: SaveResponseRequest):
     """
-    Saves each user's anonymous quiz answers + prediction result to a CSV.
-    This data is used for model retraining via /retrain.
+    Saves each user's numeric feature values + prediction to a CSV.
+    Data format matches the training dataset — ready for retraining via /retrain.
     No personal identifiers are collected.
     """
     try:
         file_exists = os.path.isfile(RESPONSES_PATH)
 
-        # Build the row to save
+        # Build fixed columns: metadata + feature columns matching original dataset
         row = {
             "timestamp":  data.timestamp,
             "prediction": data.prediction,
             "confidence": data.confidence,
-            # Probability scores for each class
             **{f"prob_{k}": v for k, v in data.confidence_scores.items()},
-            # All quiz answers
-            **{f"ans_{k}": v for k, v in data.answers.items()},
         }
+        # Add feature values directly — same column names as training data
+        for feat in FEATURES:
+            row[feat] = data.features.get(feat, "")
+
+        # Use a fixed field order so rows never misalign
+        fieldnames = list(row.keys())
 
         with open(RESPONSES_PATH, "a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=row.keys())
+            writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
             if not file_exists:
                 writer.writeheader()
             writer.writerow(row)
@@ -280,7 +281,6 @@ def save_response(data: SaveResponseRequest):
         return {"status": "saved"}
 
     except Exception as e:
-        # Never block UX — silently log and continue
         log.error(f"Save response error: {e}")
         return {"status": "skipped", "reason": str(e)}
 
@@ -304,17 +304,17 @@ def get_stats():
 
 
 @app.post("/retrain", summary="Retrain model with collected responses")
-def retrain(background_tasks: BackgroundTasks):
+def retrain(background_tasks: BackgroundTasks, api_key: str = Query(None)):
     """
     Triggers model retraining using:
     1. Original UCI dataset
     2. All collected user responses from /save-response
 
-    This runs in the background — use GET /model-info to check when it's done.
-    
-    ── Future: Replace original dataset with your university's Google Form data ──
-    Just update ORIGINAL_DATA path in main.py.
+    Requires RETRAIN_API_KEY env var to be set. If not set, endpoint is open.
     """
+    if RETRAIN_API_KEY and api_key != RETRAIN_API_KEY:
+        raise HTTPException(status_code=403, detail="Invalid or missing API key.")
+
     if not os.path.isfile(RESPONSES_PATH):
         raise HTTPException(status_code=400, detail="No collected responses yet. Use the app to gather data first.")
 
@@ -325,7 +325,7 @@ def retrain(background_tasks: BackgroundTasks):
 def _retrain_background():
     """
     Background task: combine original data + user responses, retrain, save.
-    Called automatically when /retrain endpoint is hit.
+    Supports both new format (direct feature columns) and legacy format (ans_ prefix).
     """
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
@@ -341,33 +341,46 @@ def _retrain_background():
             lambda g: 'At-Risk' if g == 0 else ('Fail' if g < 10 else 'Pass')
         )
 
-        # ── Load and convert collected responses ──────────────────────────────
+        # ── Load collected responses ─────────────────────────────────────────
         df_resp = pd.read_csv(RESPONSES_PATH)
         log.info(f"Combining {len(df_orig)} original + {len(df_resp)} collected samples")
 
-        # Map response columns (ans_fieldname → fieldname) to match training features
-        resp_cols = {}
+        # Extract feature columns — support both formats:
+        #   New format: columns named 'sex', 'age', etc. (direct)
+        #   Legacy format: columns named 'ans_sex', 'ans_age', etc.
+        resp_features = {}
         for feat in FEATURES:
-            col = f"ans_{feat}"
-            if col in df_resp.columns:
-                resp_cols[col] = feat
+            if feat in df_resp.columns:
+                resp_features[feat] = df_resp[feat]
+            elif f"ans_{feat}" in df_resp.columns:
+                resp_features[feat] = df_resp[f"ans_{feat}"]
 
-        if resp_cols:
-            df_resp_mapped = df_resp.rename(columns=resp_cols)
-            df_resp_mapped = df_resp_mapped.rename(columns={"prediction": "target"})
+        usable = sum(1 for f in FEATURES if f in resp_features)
 
-            # Only keep rows that have all required features
-            available = [f for f in FEATURES if f in df_resp_mapped.columns]
-            if len(available) >= len(FEATURES) * 0.7:   # at least 70% features present
+        if usable >= len(FEATURES) * 0.7:
+            df_resp_features = pd.DataFrame(resp_features)
+            df_resp_features['target'] = df_resp['prediction']
+
+            # Ensure numeric columns are actually numeric (handles string ranges)
+            for col in NUMERIC_COLS:
+                if col in df_resp_features.columns:
+                    df_resp_features[col] = pd.to_numeric(df_resp_features[col], errors='coerce')
+
+            # Only keep rows where all features are valid (no NaN after coercion)
+            df_resp_features = df_resp_features.dropna(subset=FEATURES)
+
+            if len(df_resp_features) > 0:
                 df_combined = pd.concat(
-                    [df_orig[FEATURES + ['target']], df_resp_mapped[available + ['target']]],
+                    [df_orig[FEATURES + ['target']], df_resp_features[FEATURES + ['target']]],
                     ignore_index=True
-                ).dropna()
+                )
+                log.info(f"Added {len(df_resp_features)} valid response rows")
             else:
                 df_combined = df_orig[FEATURES + ['target']].copy()
-                log.warning("Not enough matching features in responses — using only original data")
+                log.warning("Response rows contained invalid feature values — using only original data")
         else:
             df_combined = df_orig[FEATURES + ['target']].copy()
+            log.warning(f"Only {usable}/{len(FEATURES)} features found in responses — using only original data")
 
         # ── Encode features ──────────────────────────────────────────────────
         X = df_combined[FEATURES].copy()
@@ -399,6 +412,7 @@ def _retrain_background():
         # ── Evaluate ─────────────────────────────────────────────────────────
         acc    = accuracy_score(y_test, new_model.predict(X_test_s))
         cv     = StratifiedKFold(5, shuffle=True, random_state=42)
+        # Fit scaler on training data only, then evaluate CV on full dataset
         cv_acc = cross_val_score(new_model, new_scaler.transform(X), y_encoded, cv=cv)
 
         log.info(f"Retrained model accuracy: {acc*100:.1f}% (CV: {cv_acc.mean()*100:.1f}%)")
@@ -409,7 +423,6 @@ def _retrain_background():
         joblib.dump(new_target_encoder, TARGET_ENC_PATH)
         joblib.dump(new_label_encoders, LABEL_ENC_PATH)
 
-        # Update metadata
         feat_imp = sorted(zip(FEATURES, new_model.feature_importances_), key=lambda x: x[1], reverse=True)
         metadata_new = {
             **metadata,
@@ -423,9 +436,8 @@ def _retrain_background():
         with open(METADATA_PATH, "w") as f:
             json.dump(metadata_new, f, indent=2)
 
-        # Reload into memory
         load_model_artifacts()
-        log.info("✅ Retraining complete — model reloaded")
+        log.info("Retraining complete — model reloaded")
 
     except Exception as e:
         log.error(f"Retraining failed: {e}", exc_info=True)

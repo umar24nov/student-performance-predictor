@@ -1,7 +1,7 @@
 {
-  "name": "progressai-frontend",
-  "version": "2.0.0",
-  "description": "ProgressAI — Student Performance Prediction Frontend",
+  "name": "academicai-frontend",
+  "version": "2.1.0",
+  "description": "AcademicAI — Student Performance Prediction Frontend",
   "private": true,
   "type": "module",
   "scripts": {
