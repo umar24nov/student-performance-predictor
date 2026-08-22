@@ -22,26 +22,19 @@ async function saveResponse(payload, result) {
   } catch (_) {}
 }
 
-// ─── Grade range → midpoint on 0-20 scale ────────────────────────────────────
 const GRADE_MAP = { "0-2":1, "3-4":3.5, "5-6":5.5, "7-8":7.5, "9-10":9.5 };
 const ABS_MAP   = { "above90":2, "75-90":8, "60-75":18, "below60":30 };
 
-// Converts all collected answers into the exact payload the FastAPI model expects
 function buildPayload(a) {
-  // Use Intermediate/12th grade as G1 proxy if student just entered university (sem=1)
-  // Otherwise use actual semester grades
   const sem = parseInt(a.currentSem) || 1;
-
   let g1Raw, g2Raw;
   if (sem === 1) {
-    // Just entered — use 12th grade as G1 reference, same for G2
-    g1Raw = a.interGrade || a.G1 || "5-6";
-    g2Raw = a.interGrade || a.G2 || "5-6";
+    g1Raw = a.interGrade || "5-6";
+    g2Raw = a.interGrade || "5-6";
   } else {
     g1Raw = a.G1 || "5-6";
     g2Raw = a.G2 || a.G1 || "5-6";
   }
-
   return {
     sex: a.sex || "M",
     age: parseInt(a.age) || 19,
@@ -49,24 +42,104 @@ function buildPayload(a) {
     famsize: "GT3", Pstatus: "T",
     Medu: parseInt(a.Medu) || 2,
     Fedu: parseInt(a.Fedu) || 2,
-    Mjob: a.Mjob || "other",
-    Fjob: a.Fjob || "other",
+    Mjob: "other", Fjob: "other",
     reason: "course", guardian: "mother", traveltime: 1,
     studytime: parseInt(a.studytime) || 2,
     failures: parseInt(a.failures) || 0,
     schoolsup: a.schoolsup || "no",
     famsup: a.famsup || "yes",
-    paid: a.paid || "no",
-    activities: a.activities || "no",
-    nursery: "yes",
-    higher: a.higher || "yes",
-    internet: a.internet || "yes",
+    paid: "no", activities: "no", nursery: "yes",
+    higher: "yes", internet: a.internet || "yes",
     romantic: "no", famrel: 4, freetime: 3, goout: 3, Dalc: 1, Walc: 1,
     health: parseInt(a.health) || 3,
     absences: ABS_MAP[a.attendance] ?? 8,
     G1: Math.round((GRADE_MAP[g1Raw] ?? 7.5) * 2),
     G2: Math.round((GRADE_MAP[g2Raw] ?? 7.5) * 2),
   };
+}
+
+function analyzeStudent(a) {
+  const risks = [], strengths = [], actions = [];
+
+  const att = a.attendance;
+  if (att === "below60") {
+    risks.push({ factor: "Attendance", severity: "critical", msg: "Below 60% — most colleges will bar you from exams at this level." });
+    actions.push({ text: "Attend every class this week. No exceptions.", priority: 1 });
+    actions.push({ text: "Meet your class coordinator TODAY to discuss your situation", priority: 1 });
+  } else if (att === "60-75") {
+    risks.push({ factor: "Attendance", severity: "warning", msg: "60-75% attendance — the 75% exam eligibility cutoff is at risk." });
+    actions.push({ text: "Attend all remaining classes to push above 75%", priority: 2 });
+  } else {
+    strengths.push({ factor: "Attendance", msg: att === "above90" ? "Excellent — showing up consistently is the #1 predictor of passing." : "Solid attendance. Keep it up." });
+  }
+
+  const st = parseInt(a.studytime) || 2;
+  if (st <= 1) {
+    risks.push({ factor: "Study Time", severity: "critical", msg: "Under 2 hrs/week is the single biggest risk factor our model found." });
+    actions.push({ text: "Start with 30 min of focused study daily — phone in another room", priority: 1 });
+    actions.push({ text: "Pick your weakest subject and revise one chapter today", priority: 2 });
+  } else if (st === 2) {
+    risks.push({ factor: "Study Time", severity: "low", msg: "2-5 hrs/week is average. Even 1 extra hour makes a measurable difference." });
+    actions.push({ text: "Add 1 extra hour of study this week — even 15 min/day helps", priority: 3 });
+  } else {
+    strengths.push({ factor: "Study Time", msg: st >= 4 ? "Serious study hours — that discipline directly shows in results." : "Good study routine. Consistency is your advantage." });
+  }
+
+  const fails = parseInt(a.failures) || 0;
+  if (fails >= 2) {
+    risks.push({ factor: "Backlogs", severity: "critical", msg: fails + " backlogs is serious. Risk of losing motivation compounds fast." });
+    actions.push({ text: "Clear your oldest backlog first — it gets harder every semester", priority: 1 });
+    actions.push({ text: "Ask professors for extra doubt sessions for failed subjects", priority: 2 });
+  } else if (fails === 1) {
+    risks.push({ factor: "Backlogs", severity: "warning", msg: "One backlog is recoverable. Don't let it become two." });
+    actions.push({ text: "Set a goal to clear it this semester — schedule dedicated time for it", priority: 2 });
+  } else {
+    strengths.push({ factor: "Backlogs", msg: "Clean record — no backlogs. That's a strong foundation." });
+  }
+
+  const sem = parseInt(a.currentSem) || 1;
+  const g1Val = sem === 1 ? GRADE_MAP[a.interGrade || "5-6"] : GRADE_MAP[a.G1 || "5-6"];
+  if (g1Val <= 3.5) {
+    risks.push({ factor: "Grades", severity: "critical", msg: "Low recent grades strongly predict continued struggle without intervention." });
+    actions.push({ text: "Visit your professor this week — ask exactly what to focus on", priority: 1 });
+    actions.push({ text: "Solve last 3 years of question papers for each subject", priority: 2 });
+  } else if (g1Val <= 5.5) {
+    risks.push({ factor: "Grades", severity: "warning", msg: "Average grades — the gap between you and top performers is closable with effort." });
+    actions.push({ text: "Try explaining concepts to a friend — it reveals what you don't understand", priority: 3 });
+  } else if (g1Val >= 7.5) {
+    strengths.push({ factor: "Grades", msg: "Strong academic foundation. Your grades put you in a good position." });
+  }
+
+  if (a.schoolsup === "no") {
+    risks.push({ factor: "No Coaching", severity: "low", msg: "Without extra coaching, self-study becomes your primary weapon." });
+    actions.push({ text: "Check if your college offers free remedial classes or peer tutoring", priority: 3 });
+  } else {
+    strengths.push({ factor: "Tutoring", msg: "Coaching gives you an edge — make sure you actively use it, not just attend." });
+  }
+
+  if (a.famsup === "no") {
+    risks.push({ factor: "Family Support", severity: "warning", msg: "Lack of family support makes the journey harder. Build your own network." });
+    actions.push({ text: "Find a mentor — a senior, teacher, or counselor who can guide you", priority: 2 });
+  } else {
+    strengths.push({ factor: "Family Support", msg: "Family backing is a major predictor of success. You have that advantage." });
+  }
+
+  const hlth = parseInt(a.health) || 3;
+  if (hlth <= 2) {
+    risks.push({ factor: "Health", severity: "warning", msg: "Poor health impacts your ability to focus, attend class, and retain information." });
+    actions.push({ text: "Sleep 7+ hours tonight — memory consolidation happens during sleep", priority: 2 });
+    actions.push({ text: "Walk 20 min daily — it measurably improves focus and grades", priority: 3 });
+  } else if (hlth >= 4) {
+    strengths.push({ factor: "Health", msg: "Good health — you have the physical foundation to perform well." });
+  }
+
+  if (a.internet === "no") {
+    risks.push({ factor: "Resources", severity: "low", msg: "No internet limits access to online study materials and resources." });
+    actions.push({ text: "Use your college library — most have free WiFi and computers", priority: 3 });
+  }
+
+  actions.sort((a, b) => a.priority - b.priority);
+  return { risks, strengths, actions: actions.slice(0, 6) };
 }
 
 // Grade options reused across multiple questions
@@ -78,65 +151,48 @@ const GRADE_OPTIONS = [
 
 // ─── Static base questions (always shown) ─────────────────────────────────────
 const BASE_QUESTIONS = [
-  { id:"sex", section:"About You", icon:"👤", q:"What is your gender?",
+  { id:"sex", section:"About You", icon:"👤", q:"What's your gender?",
     type:"choice", cols:2, options:[{v:"M",l:"Male",e:"👦"},{v:"F",l:"Female",e:"👧"}] },
 
   { id:"age", section:"About You", icon:"🎂", q:"How old are you?",
     type:"number", min:15, max:35, placeholder:"e.g. 19" },
 
-  { id:"address", section:"About You", icon:"🏘️", q:"Where do you live?",
-    type:"choice", cols:2, options:[{v:"U",l:"Urban / City",e:"🏙️"},{v:"R",l:"Rural / Village",e:"🌾"}] },
+  { id:"address", section:"About You", icon:"🏘️", q:"Do you live in a city or a smaller town/village?",
+    type:"choice", cols:2, options:[{v:"U",l:"City / Urban",e:"🏙️"},{v:"R",l:"Town / Village",e:"🌾"}] },
 
-  // Which semester the student is currently in — drives dynamic grade questions
   { id:"currentSem", section:"About You", icon:"📅",
-    q:"Which semester / year are you currently in?",
+    q:"Which year of college are you in right now?",
     type:"choice", cols:2, options:[
-      {v:"1",l:"1st Semester / 1st Year",e:"🆕"},
-      {v:"2",l:"2nd Semester",e:"2️⃣"},
-      {v:"3",l:"3rd Semester / 2nd Year",e:"3️⃣"},
-      {v:"4",l:"4th Semester",e:"4️⃣"},
-      {v:"5",l:"5th Semester / 3rd Year",e:"5️⃣"},
-      {v:"6",l:"6th Semester",e:"6️⃣"},
-      {v:"7",l:"7th Semester / 4th Year",e:"7️⃣"},
-      {v:"8",l:"8th Semester / Final",e:"🎓"},
+      {v:"1",l:"1st Year",e:"🆕"},{v:"2",l:"2nd Semester",e:"2️⃣"},
+      {v:"3",l:"2nd Year",e:"3️⃣"},{v:"4",l:"4th Semester",e:"4️⃣"},
+      {v:"5",l:"3rd Year",e:"5️⃣"},{v:"6",l:"6th Semester",e:"6️⃣"},
+      {v:"7",l:"Final Year",e:"7️⃣"},{v:"8",l:"Last Semester",e:"🎓"},
     ]},
 
-  { id:"Medu", section:"Family Background", icon:"👩‍🎓", q:"What is your mother's highest education?",
+  { id:"Medu", section:"Your Family", icon:"👩‍🎓", q:"What's your mother's education level?",
     type:"choice", cols:2, options:[
-      {v:"0",l:"No formal education",e:"—"},{v:"1",l:"Up to Primary / 5th",e:"📖"},
-      {v:"2",l:"Middle school / 8th",e:"📚"},{v:"3",l:"10th / 12th passed",e:"🏫"},
-      {v:"4",l:"Graduate or higher",e:"🎓"}] },
+      {v:"0",l:"No formal education",e:"—"},{v:"1",l:"Up to 5th / Primary",e:"📖"},
+      {v:"2",l:"Up to 8th / Middle school",e:"📚"},{v:"3",l:"10th or 12th passed",e:"🏫"},
+      {v:"4",l:"College graduate or higher",e:"🎓"}] },
 
-  { id:"Fedu", section:"Family Background", icon:"👨‍🎓", q:"What is your father's highest education?",
+  { id:"Fedu", section:"Your Family", icon:"👨‍🎓", q:"What's your father's education level?",
     type:"choice", cols:2, options:[
-      {v:"0",l:"No formal education",e:"—"},{v:"1",l:"Up to Primary / 5th",e:"📖"},
-      {v:"2",l:"Middle school / 8th",e:"📚"},{v:"3",l:"10th / 12th passed",e:"🏫"},
-      {v:"4",l:"Graduate or higher",e:"🎓"}] },
+      {v:"0",l:"No formal education",e:"—"},{v:"1",l:"Up to 5th / Primary",e:"📖"},
+      {v:"2",l:"Up to 8th / Middle school",e:"📚"},{v:"3",l:"10th or 12th passed",e:"🏫"},
+      {v:"4",l:"College graduate or higher",e:"🎓"}] },
 
-  { id:"Mjob", section:"Family Background", icon:"👩‍💼", q:"What is your mother's occupation?",
+  { id:"studytime", section:"Your Studies", icon:"📖", q:"How many hours a week do you study outside class?",
     type:"choice", cols:2, options:[
-      {v:"teacher",l:"Teacher / Lecturer",e:"👩‍🏫"},{v:"health",l:"Healthcare / Doctor / Nurse",e:"🏥"},
-      {v:"services",l:"Govt / Civil Services",e:"🏛️"},{v:"at_home",l:"Homemaker",e:"🏠"},
-      {v:"other",l:"Business / Private / Other",e:"💼"}] },
+      {v:"1",l:"Less than 2 hours",e:"😬"},{v:"2",l:"2 – 5 hours",e:"📚"},
+      {v:"3",l:"5 – 10 hours",e:"💡"},{v:"4",l:"More than 10 hours",e:"🌟"}] },
 
-  { id:"Fjob", section:"Family Background", icon:"👨‍💼", q:"What is your father's occupation?",
-    type:"choice", cols:2, options:[
-      {v:"teacher",l:"Teacher / Lecturer",e:"👨‍🏫"},{v:"health",l:"Healthcare / Doctor",e:"🏥"},
-      {v:"services",l:"Govt / Civil Services",e:"🏛️"},{v:"at_home",l:"Homemaker",e:"🏠"},
-      {v:"other",l:"Business / Agriculture / Other",e:"💼"}] },
-
-  { id:"studytime", section:"Academics", icon:"📖", q:"How many hours do you study per week (outside class)?",
-    type:"choice", cols:2, options:[
-      {v:"1",l:"Less than 2 hours",e:"😬"},{v:"2",l:"2–5 hours",e:"📚"},
-      {v:"3",l:"5–10 hours",e:"💡"},{v:"4",l:"More than 10 hours",e:"🌟"}] },
-
-  { id:"failures", section:"Academics", icon:"📚", q:"Have you ever had to repeat a subject?",
-    hint:"University exams only — 0 is perfectly normal",
+  { id:"failures", section:"Your Studies", icon:"📚", q:"Have you ever failed a subject or had a backlog?",
+    hint:"University exams only. 0 is perfectly normal.",
     type:"choice", cols:4, options:[
-      {v:"0",l:"No repeats",e:"✅"},{v:"1",l:"1 subject",e:"1️⃣"},
+      {v:"0",l:"No",e:"✅"},{v:"1",l:"1 subject",e:"1️⃣"},
       {v:"2",l:"2 subjects",e:"2️⃣"},{v:"3",l:"3 or more",e:"3️⃣"}] },
 
-  { id:"attendance", section:"Academics", icon:"🏫", q:"What is your attendance percentage this year?",
+  { id:"attendance", section:"Your Studies", icon:"🏫", q:"What's your attendance like this year?",
     type:"choice", cols:2, options:[
       {v:"above90",l:"Above 90%",e:"🌟"},{v:"75-90",l:"75% – 90%",e:"✅"},
       {v:"60-75",l:"60% – 75%",e:"⚠️"},{v:"below60",l:"Below 60%",e:"🚨"}] },
@@ -144,85 +200,48 @@ const BASE_QUESTIONS = [
 
 // ─── Tail questions (always shown after grades) ───────────────────────────────
 const TAIL_QUESTIONS = [
-  { id:"schoolsup", section:"Support", icon:"🎯", q:"Do you get extra academic support like private tutoring?",
-    hint:"Coaching classes, personal tutor, or remedial sessions",
+  { id:"schoolsup", section:"Your Support", icon:"🎯", q:"Do you attend coaching or have a tutor?",
+    hint:"Any extra academic help — tuition, coaching centre, senior mentor",
     type:"yesno" },
-  { id:"famsup", section:"Support", icon:"👨‍👩‍👧", q:"Does your family actively support your studies?",
+  { id:"famsup", section:"Your Support", icon:"👨‍👩‍👧", q:"Does your family actively support your studies?",
     hint:"Encouraging your education, helping with fees or study materials",
     type:"yesno" },
-  { id:"internet", section:"Well-being", icon:"🏠", q:"Do you have a quiet place to study at home?",
-    hint:"A distraction-free space for focused study",
+  { id:"internet", section:"Your Setup", icon:"📱", q:"Do you have internet access at home for studying?",
     type:"yesno" },
-  { id:"higher", section:"Goals", icon:"🎯", q:"Do you plan to pursue a master's degree or further studies?",
-    type:"yesno" },
-  { id:"health", section:"Well-being", icon:"💪", q:"How is your health these days?",
+  { id:"health", section:"Your Health", icon:"💪", q:"How's your health these days?",
+    hint:"Physical and mental health both affect your performance",
     type:"choice", cols:3, options:[
-      {v:"1",l:"Very poor",e:"🤒"},{v:"2",l:"Below average",e:"😔"},
-      {v:"3",l:"Average",e:"😐"},{v:"4",l:"Good",e:"🙂"},{v:"5",l:"Excellent",e:"💪"}] },
+      {v:"1",l:"Poor",e:"🤒"},{v:"2",l:"Below avg",e:"😔"},
+      {v:"3",l:"Average",e:"😐"},{v:"4",l:"Good",e:"🙂"},{v:"5",l:"Great",e:"💪"}] },
 ];
 
-/**
- * Builds the full dynamic question list based on current answers.
- * - Sem 1: asks Intermediate / 12th grade (no semester grades yet)
- * - Sem 2+: asks G1 (required), G2 (required)
- * - Sem 3+: asks G3, G4 … up to completed sems (all optional after G2)
- * All grade questions use GRADE_OPTIONS (ranges out of 10)
- */
 function buildQuestions(answers) {
   const sem = parseInt(answers.currentSem) || 0;
   const questions = [...BASE_QUESTIONS];
 
-  if (sem === 0) {
-    // currentSem not answered yet — no grade questions inserted yet
-    return [...questions, ...TAIL_QUESTIONS];
-  }
+  if (sem === 0) return [...questions, ...TAIL_QUESTIONS];
 
   if (sem === 1) {
-    // Just entered university — ask about Intermediate / 12th marks as reference
     questions.push({
       id: "interGrade", section: "Your Grades", icon: "🏫",
-      q: "What was your average grade in your last qualifying exam?",
-      hint: "12th Board / Intermediate — pick the closest range (e.g. 75% ≈ 7–8 out of 10)",
-      type: "choice", cols: 3, options: GRADE_OPTIONS,
-    });
-    questions.push({
-      id: "prevGrade", section: "Your Grades", icon: "📖",
-      q: "How would you describe your overall academics before university?",
-      hint: "Think of your 10th / 12th standard performance",
+      q: "What was your 12th / Inter board exam average?",
+      hint: "Out of 10 — pick the closest range (e.g. 75% = 7-8)",
       type: "choice", cols: 3, options: GRADE_OPTIONS,
     });
   } else {
-    // Sem 2 or above — ask semester grades
-    // Sem 1 grade — always required
     questions.push({
       id: "G1", section: "Your Grades", icon: "📝",
-      q: "What was your average grade in Semester 1?",
-      hint: "Pick the closest range (e.g. 75% ≈ 7–8 out of 10)",
+      q: "What was your average in Semester 1?",
+      hint: "Out of 10 — pick the closest range",
       type: "choice", cols: 3, options: GRADE_OPTIONS,
     });
 
-    // Sem 2 grade — required if sem >= 2
     if (sem >= 2) {
       questions.push({
         id: "G2", section: "Your Grades", icon: "📊",
-        q: "What was your average grade in Semester 2?",
-        hint: "Pick the closest range (e.g. 75% ≈ 7–8 out of 10)",
+        q: "What was your average in Semester 2?",
+        hint: "Out of 10 — pick the closest range",
         type: "choice", cols: 3, options: GRADE_OPTIONS,
-      });
-    }
-
-    // Sem 3 onwards — optional, one per completed semester
-    const semLabels = ["3","4","5","6","7","8"];
-    const semIcons  = ["3️⃣","4️⃣","5️⃣","6️⃣","7️⃣","🎓"];
-    const completedExtra = Math.max(0, sem - 2); // semesters beyond 2 that are completed
-    for (let i = 0; i < Math.min(completedExtra, 6); i++) {
-      const semNum = i + 3;
-      questions.push({
-        id: `G${semNum}extra`, section: "Your Grades", icon: semIcons[i],
-        q: `What was your average grade in Semester ${semLabels[i]}?`,
-        hint: "Optional — skip if you don't remember",
-        type: "choice", cols: 3, options: GRADE_OPTIONS,
-        optional: true,
       });
     }
   }
@@ -333,7 +352,7 @@ function NumberInput({ value, onChange, min, max, placeholder }) {
 }
 
 // ─── Result Card ───────────────────────────────────────────────────────────────
-function ResultCard({ result, onRetry, onHome, onRate }) {
+function ResultCard({ result, analysis, onRetry, onHome, onRate }) {
   const cfg = {
     Pass:     { grad:"from-emerald-950 to-emerald-900", accent:"text-emerald-400", bar:"#34d399" },
     Fail:     { grad:"from-orange-950 to-orange-900",   accent:"text-orange-400",  bar:"#fb923c" },
@@ -342,29 +361,86 @@ function ResultCard({ result, onRetry, onHome, onRate }) {
   const barC = { Pass:"#34d399", Fail:"#fb923c", "At-Risk":"#f87171" };
   const c = cfg[result.prediction] || cfg["Fail"];
   const scores = result.confidence_scores || {};
+  const { risks = [], strengths = [], actions = [] } = analysis || {};
 
   return (
-    <div className="rounded-3xl overflow-hidden border border-white/10 shadow-2xl animate-popIn">
-      <div className={`bg-gradient-to-br ${c.grad} p-10 text-center relative overflow-hidden`}>
-        <div className="absolute inset-0 opacity-20" style={{background:`radial-gradient(circle at 50% 60%,${c.bar},transparent 65%)`}}/>
-        <span className="text-6xl block mb-4 relative z-10">{result.emoji}</span>
-        <p className={`text-xs font-bold tracking-widest uppercase ${c.accent} mb-2 relative z-10`}>Academic Performance Prediction</p>
-        <h2 className={`font-display text-4xl sm:text-5xl font-extrabold ${c.accent} relative z-10`}>{result.prediction}</h2>
-        <p className="text-white/70 text-sm mt-2 relative z-10">AI Confidence: <strong className="text-white">{result.confidence}%</strong></p>
-      </div>
-      <div className="bg-[#0d1220] p-6 sm:p-8">
-        <p className="text-xs font-bold tracking-widest uppercase text-slate-500 mb-4">Probability Breakdown</p>
-        {Object.entries(scores).map(([label, pct]) => (
-          <div key={label} className="flex items-center gap-3 mb-3.5">
-            <span className="text-sm font-semibold w-16 shrink-0">{label}</span>
-            <div className="flex-1 h-2 bg-white/6 rounded-full overflow-hidden">
-              <div className="h-full rounded-full transition-all duration-1000" style={{width:`${pct}%`,background:barC[label]||"#8892a4"}}/>
+    <div className="space-y-4 animate-popIn">
+      <div className="rounded-3xl overflow-hidden border border-white/10 shadow-2xl">
+        <div className={`bg-gradient-to-br ${c.grad} p-8 sm:p-10 text-center relative overflow-hidden`}>
+          <div className="absolute inset-0 opacity-20" style={{background:`radial-gradient(circle at 50% 60%,${c.bar},transparent 65%)`}}/>
+          <span className="text-6xl block mb-4 relative z-10">{result.emoji}</span>
+          <p className={`text-xs font-bold tracking-widest uppercase ${c.accent} mb-2 relative z-10`}>Your Prediction</p>
+          <h2 className={`font-display text-4xl sm:text-5xl font-extrabold ${c.accent} relative z-10`}>{result.prediction}</h2>
+          <p className="text-white/70 text-sm mt-2 relative z-10">AI Confidence: <strong className="text-white">{result.confidence}%</strong></p>
+        </div>
+        <div className="bg-[#0d1220] p-6 sm:p-8">
+          <p className="text-xs font-bold tracking-widest uppercase text-slate-500 mb-4">Probability Breakdown</p>
+          {Object.entries(scores).map(([label, pct]) => (
+            <div key={label} className="flex items-center gap-3 mb-3.5">
+              <span className="text-sm font-semibold w-16 shrink-0">{label}</span>
+              <div className="flex-1 h-2 bg-white/6 rounded-full overflow-hidden">
+                <div className="h-full rounded-full transition-all duration-1000" style={{width:`${pct}%`,background:barC[label]||"#8892a4"}}/>
+              </div>
+              <span className="text-xs font-bold text-slate-400 w-10 text-right">{pct}%</span>
             </div>
-            <span className="text-xs font-bold text-slate-400 w-10 text-right">{pct}%</span>
+          ))}
+        </div>
+      </div>
+
+      {risks.length > 0 && (
+        <div className="bg-[#0d1220] border border-white/8 rounded-3xl p-6 sm:p-8">
+          <p className="text-xs font-bold tracking-widest uppercase text-red-400 mb-4">What is putting you at risk</p>
+          <div className="space-y-3">
+            {risks.map((r, i) => (
+              <div key={i} className={`flex items-start gap-3 p-3.5 rounded-xl border ${r.severity === "critical" ? "border-red-500/25 bg-red-500/5" : r.severity === "warning" ? "border-yellow-500/20 bg-yellow-500/5" : "border-white/8 bg-white/3"}`}>
+                <span className={`text-lg shrink-0 mt-0.5 ${r.severity === "critical" ? "text-red-400" : r.severity === "warning" ? "text-yellow-400" : "text-slate-400"}`}>
+                  {r.severity === "critical" ? "\u25CF" : r.severity === "warning" ? "\u25CF" : "\u25CB"}
+                </span>
+                <div>
+                  <p className="text-sm font-bold text-white">{r.factor}</p>
+                  <p className="text-xs text-slate-400 leading-relaxed mt-0.5">{r.msg}</p>
+                </div>
+              </div>
+            ))}
           </div>
-        ))}
-        <div className="bg-white/4 border border-white/8 rounded-2xl p-5 mt-5">
-          <p className="text-xs font-bold tracking-widest uppercase text-slate-400 mb-2">What this means for you</p>
+        </div>
+      )}
+
+      {strengths.length > 0 && (
+        <div className="bg-[#0d1220] border border-white/8 rounded-3xl p-6 sm:p-8">
+          <p className="text-xs font-bold tracking-widest uppercase text-emerald-400 mb-4">What is working for you</p>
+          <div className="space-y-3">
+            {strengths.map((s, i) => (
+              <div key={i} className="flex items-start gap-3 p-3.5 rounded-xl border border-emerald-500/15 bg-emerald-500/5">
+                <span className="text-lg shrink-0 mt-0.5 text-emerald-400">+</span>
+                <div>
+                  <p className="text-sm font-bold text-white">{s.factor}</p>
+                  <p className="text-xs text-slate-400 leading-relaxed mt-0.5">{s.msg}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {actions.length > 0 && (
+        <div className="bg-gradient-to-br from-blue-500/8 to-violet-500/8 border border-blue-500/20 rounded-3xl p-6 sm:p-8">
+          <p className="text-xs font-bold tracking-widest uppercase text-blue-400 mb-1">Your Action Plan</p>
+          <p className="text-xs text-slate-500 mb-5">Do these in order — the first ones matter most</p>
+          <div className="space-y-3">
+            {actions.map((a, i) => (
+              <div key={i} className="flex items-start gap-3">
+                <span className="w-6 h-6 shrink-0 rounded-full bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-xs font-bold text-blue-400 mt-0.5">{i + 1}</span>
+                <p className="text-sm text-slate-300 leading-relaxed">{a.text}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="bg-[#0d1220] border border-white/8 rounded-3xl p-6 sm:p-8">
+        <div className="bg-white/4 border border-white/8 rounded-2xl p-5">
+          <p className="text-xs font-bold tracking-widest uppercase text-slate-400 mb-2">What this means</p>
           <p className="text-sm text-slate-300 leading-relaxed">{result.tip}</p>
         </div>
         <div className="flex items-center gap-2 mt-4 text-xs text-slate-500">
@@ -372,11 +448,11 @@ function ResultCard({ result, onRetry, onHome, onRate }) {
           Model trained on {result.dataset_size||"395"} students · Accuracy: {result.model_accuracy} · Random Forest
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-5">
-          <button onClick={onRetry} className="py-3 rounded-xl bg-white/5 border border-white/10 text-sm font-bold hover:bg-white/8 transition-all">🔄 Retry</button>
-          <button onClick={onHome}  className="py-3 rounded-xl bg-white/5 border border-white/10 text-sm font-bold hover:bg-white/8 transition-all">🏠 Home</button>
-          <button onClick={onRate}  className="py-3 rounded-xl bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-sm font-bold hover:bg-yellow-500/15 transition-all">★ Rate Us</button>
+          <button onClick={onRetry} className="py-3 rounded-xl bg-white/5 border border-white/10 text-sm font-bold hover:bg-white/8 transition-all">Retry</button>
+          <button onClick={onHome}  className="py-3 rounded-xl bg-white/5 border border-white/10 text-sm font-bold hover:bg-white/8 transition-all">Home</button>
+          <button onClick={onRate}  className="py-3 rounded-xl bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-sm font-bold hover:bg-yellow-500/15 transition-all">Rate Us</button>
           <button onClick={() => navigator.share?.({title:"AcademicAI Result",text:`My prediction: ${result.prediction} (${result.confidence}% confidence)`}).catch(()=>{})}
-            className="py-3 rounded-xl bg-gradient-to-r from-blue-500 to-violet-600 text-sm font-bold hover:-translate-y-0.5 transition-all">📤 Share</button>
+            className="py-3 rounded-xl bg-gradient-to-r from-blue-500 to-violet-600 text-sm font-bold hover:-translate-y-0.5 transition-all">Share</button>
         </div>
       </div>
     </div>
@@ -507,6 +583,7 @@ export default function App() {
   const [answers, setAnswers] = useState({});
   const [qIndex,  setQIndex]  = useState(0);
   const [result,  setResult]  = useState(null);
+  const [analysis, setAnalysis] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState(null);
 
@@ -545,13 +622,14 @@ export default function App() {
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `Error ${res.status}`); }
       const data = await res.json();
       setResult(data);
+      setAnalysis(analyzeStudent(answers));
       await saveResponse(payload, data);
       setPage("result");
     } catch(e) { setError(e.message); }
     finally    { setLoading(false); }
   }
 
-  function startQuiz() { setPage("quiz"); setQIndex(0); setAnswers({}); setResult(null); setError(null); }
+  function startQuiz() { setPage("quiz"); setQIndex(0); setAnswers({}); setResult(null); setAnalysis(null); setError(null); }
   function goHome()    { setPage("home"); }
   function navigate(p){ setPage(p); }
   function handleScrollTo(id) {
@@ -725,7 +803,7 @@ export default function App() {
           )}
 
           {page === "result" && result && !loading && (
-            <ResultCard result={result} onRetry={startQuiz} onHome={goHome} onRate={() => navigate("rateus")}/>
+            <ResultCard result={result} analysis={analysis} onRetry={startQuiz} onHome={goHome} onRate={() => navigate("rateus")}/>
           )}
 
           {page === "quiz" && !loading && current && (

@@ -222,9 +222,9 @@ def predict(data: StudentInput):
         }
 
         tips = {
-            "Pass":    "Great foundation! Maintain your attendance, clear any pending fees, and keep reviewing consistently. You're on the right path.",
-            "Fail":    "Don't give up — this is a warning, not a verdict. Focus on reducing absences, increasing study time, and seeking help from teachers. Change is possible now.",
-            "At-Risk": "Urgent: your profile matches students who have withdrawn or failed critically. Please speak with your academic advisor immediately. Consider scholarship options and attend every class.",
+            "Pass":    "You're on track. Keep attending classes, stay consistent with your study routine, and don't get complacent. Small drops in attendance or study time can change this quickly.",
+            "Fail":    "Your profile shows warning signs, but this is fixable. Start by attending every class this week, increase your study time to at least 5 hours/week, and visit your professor to ask exactly what to focus on for exams.",
+            "At-Risk": "This is urgent. You need to act now — attend every class, meet your academic advisor this week, and clear any pending backlogs immediately. Consider reaching out to your college counseling cell for support.",
         }
 
         emojis = {"Pass": "🎓", "Fail": "📉", "At-Risk": "⚠️"}
