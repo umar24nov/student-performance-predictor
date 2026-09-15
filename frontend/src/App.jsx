@@ -342,7 +342,7 @@ function ResultCard({ result, analysis, onRetry, onHome, onRate }) {
   const { risks = [], strengths = [], actions = [] } = analysis || {};
 
   return (
-    <div className="space-y-4 animate-popIn">
+    <div className="space-y-4">
       <div className="rounded-3xl overflow-hidden border border-white/10 shadow-2xl">
         <div className={`bg-gradient-to-br ${c.grad} p-8 sm:p-10 text-center relative overflow-hidden`}>
           <div className="absolute inset-0 opacity-20" style={{background:`radial-gradient(circle at 50% 60%,${c.bar},transparent 65%)`}}/>
@@ -357,7 +357,7 @@ function ResultCard({ result, analysis, onRetry, onHome, onRate }) {
             <div key={label} className="flex items-center gap-3 mb-3.5">
               <span className="text-sm font-semibold w-16 shrink-0">{label}</span>
               <div className="flex-1 h-2 bg-white/6 rounded-full overflow-hidden">
-                <div className="h-full rounded-full transition-all duration-1000" style={{width:`${pct}%`,background:barC[label]||"#8892a4"}}/>
+                <div className="h-full rounded-full" style={{width:`${pct}%`,background:barC[label]||"#8892a4"}}/>
               </div>
               <span className="text-xs font-bold text-slate-400 w-10 text-right">{pct}%</span>
             </div>
@@ -507,7 +507,7 @@ function Navbar({ page, onHome, onStartQuiz, onNavigate, user, onAuthClick, onLo
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => { setOpen(false); onStartQuiz(); }}
-            className="btn-shine px-4 py-2 rounded-xl bg-gradient-to-r from-blue-500 to-violet-600 text-sm font-bold hover:-translate-y-0.5 hover:shadow-lg hover:shadow-blue-500/25 transition-all whitespace-nowrap">
+            className="px-4 py-2 rounded-xl bg-gradient-to-r from-blue-500 to-violet-600 text-sm font-bold hover:brightness-110 whitespace-nowrap">
             Check My Score →
           </button>
           <button onClick={() => setOpen(o => !o)} className="md:hidden w-9 h-9 flex flex-col justify-center items-center gap-1.5">
@@ -518,7 +518,7 @@ function Navbar({ page, onHome, onStartQuiz, onNavigate, user, onAuthClick, onLo
         </div>
       </div>
       {open && (
-        <div className="md:hidden bg-[#0d1220]/95 backdrop-blur-xl border-t border-white/8 px-5 py-4 flex flex-col gap-3 animate-fadeUp">
+        <div className="md:hidden bg-[#0d1220]/95 backdrop-blur-xl border-t border-white/8 px-5 py-4 flex flex-col gap-3">
           {links.map(([id,l]) => (
             <button key={id} onClick={() => navClick(id)} className="text-sm font-medium text-slate-300 hover:text-white text-left py-1 transition-colors">{l}</button>
           ))}
@@ -673,12 +673,8 @@ export default function App() {
         .font-display { font-family:'Syne',sans-serif; }
         button,a,[role="button"] { cursor:pointer!important; }
         @keyframes blink  { 0%,100%{opacity:1}50%{opacity:.3} }
-        @keyframes fadeUp { from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)} }
-        @keyframes popIn  { from{opacity:0;transform:scale(.9)}to{opacity:1;transform:scale(1)} }
         @keyframes spin   { to{transform:rotate(360deg)} }
         .animate-blink  { animation:blink 2s infinite; }
-        .animate-fadeUp { animation:fadeUp .4s ease both; }
-        .animate-popIn  { animation:popIn .45s cubic-bezier(.175,.885,.32,1.275) both; }
         .spinner        { animation:spin .75s linear infinite; }
       `}</style>
 
@@ -689,7 +685,7 @@ export default function App() {
         user={user} onAuthClick={requireAuth} onLogout={handleLogout}/>
 
       {/* Page content — keyed so view transitions replay on navigation */}
-      <div key={page} className="animate-pageFade">
+      <div key={page}>
       {/* Auth */}
       {page === "auth" && <LazyPage><Auth onAuth={handleAuth} onBack={goHome}/></LazyPage>}
 
@@ -746,7 +742,7 @@ export default function App() {
           <button onClick={goHome} className="flex items-center gap-2 text-sm text-slate-500 hover:text-slate-300 transition-colors mb-6">← Back to Home</button>
 
           {loading && (
-            <div className="bg-[#0d1220] border border-white/8 rounded-3xl p-12 text-center animate-fadeUp">
+            <div className="bg-[#0d1220] border border-white/8 rounded-3xl p-12 text-center">
               <div className="w-12 h-12 border-2 border-blue-500/20 border-t-blue-400 rounded-full spinner mx-auto mb-5"/>
               <p className="font-bold text-lg mb-2">Analysing your academic profile…</p>
               <p className="text-slate-400 text-sm">Our AI is crunching the numbers ✨</p>
@@ -765,12 +761,12 @@ export default function App() {
                   <span className="text-blue-400 font-bold">{qIndex+1} / {questions.length}</span>
                 </div>
                 <div className="h-1 bg-white/6 rounded-full overflow-hidden">
-                  <div className="h-full bg-gradient-to-r from-blue-500 to-violet-500 rounded-full transition-all duration-500"
+                  <div className="h-full bg-gradient-to-r from-blue-500 to-violet-500 rounded-full"
                     style={{width:`${Math.round((qIndex/questions.length)*100)}%`}}/>
                 </div>
               </div>
 
-              <div key={qIndex} className="relative bg-[#0d1220] border border-white/8 rounded-3xl p-6 sm:p-8 animate-fadeUp overflow-hidden">
+              <div key={qIndex} className="relative bg-[#0d1220] border border-white/8 rounded-3xl p-6 sm:p-8 overflow-hidden">
                 <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-blue-500 via-violet-500 to-transparent"/>
                 <div className="text-xs font-bold tracking-widest uppercase text-blue-400 mb-2">{current.icon} {current.section}</div>
                 <p className="text-lg sm:text-xl font-bold leading-snug mb-1.5">{current.q}</p>
@@ -788,9 +784,9 @@ export default function App() {
                     <button onClick={goBack} className="px-5 py-3 rounded-xl border border-white/10 text-slate-400 text-sm font-bold hover:border-white/20 hover:text-white transition-all">← Back</button>
                   )}
                   <button onClick={goNext} disabled={!canNext}
-                    className={`btn-shine flex-1 py-3.5 rounded-xl text-sm font-bold transition-all
-                      ${isLast ? "bg-gradient-to-r from-emerald-500 to-violet-600 hover:shadow-emerald-500/20" : "bg-gradient-to-r from-blue-500 to-violet-600 hover:shadow-blue-500/20"}
-                      ${canNext ? "hover:-translate-y-0.5 hover:shadow-lg" : "opacity-35 cursor-not-allowed"}`}>
+                    className={`flex-1 py-3.5 rounded-xl text-sm font-bold
+                      ${isLast ? "bg-gradient-to-r from-emerald-500 to-violet-600" : "bg-gradient-to-r from-blue-500 to-violet-600"}
+                      ${canNext ? "hover:brightness-110" : "opacity-35 cursor-not-allowed"}`}>
                     {isLast ? "🔮 Predict My Performance" : "Continue →"}
                   </button>
                 </div>
