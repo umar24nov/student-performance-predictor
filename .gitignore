@@ -16,6 +16,8 @@ dist/
 
 # ── Data collection (sensitive user responses) ─
 backend/student_responses.csv
+backend/academicai.db
+*.timestamp-*.mjs
 
 # ── OS ────────────────────────────────────────
 .DS_Store

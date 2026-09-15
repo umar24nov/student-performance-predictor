@@ -1,5 +1,5 @@
 {
-  "model_type": "RandomForestClassifier",
+  "model_type": "Random Forest",
   "accuracy": 0.8101,
   "cv_accuracy": 0.8684,
   "cv_std": 0.0372,
@@ -51,15 +51,15 @@
   "dataset_size": 395,
   "top_features": [
     "G2",
-    "absences",
     "G1",
-    "failures",
-    "Medu",
-    "age",
-    "Walc",
-    "Mjob",
+    "absences",
     "goout",
-    "health"
+    "failures",
+    "age",
+    "Medu",
+    "Mjob",
+    "health",
+    "Walc"
   ],
   "categorical_cols": [
     "sex",
@@ -153,5 +153,49 @@
       "no": 0,
       "yes": 1
     }
-  }
+  },
+  "models": {
+    "Random Forest": {
+      "accuracy": 0.8101,
+      "cv_accuracy": 0.8684,
+      "cv_std": 0.0372,
+      "precision": 0.8421,
+      "recall": 0.8101,
+      "f1": 0.8196
+    },
+    "Logistic Regression": {
+      "accuracy": 0.7722,
+      "cv_accuracy": 0.8354,
+      "cv_std": 0.0139,
+      "precision": 0.8258,
+      "recall": 0.7722,
+      "f1": 0.789
+    },
+    "K-Nearest Neighbors": {
+      "accuracy": 0.6962,
+      "cv_accuracy": 0.7114,
+      "cv_std": 0.0148,
+      "precision": 0.6171,
+      "recall": 0.6962,
+      "f1": 0.6502
+    },
+    "Gradient Boosting": {
+      "accuracy": 0.7848,
+      "cv_accuracy": 0.8633,
+      "cv_std": 0.0353,
+      "precision": 0.8149,
+      "recall": 0.7848,
+      "f1": 0.7935
+    },
+    "Neural Network": {
+      "accuracy": 0.7089,
+      "cv_accuracy": 0.6709,
+      "cv_std": 0.033,
+      "precision": 0.6745,
+      "recall": 0.7089,
+      "f1": 0.6548
+    }
+  },
+  "primary_model": "Random Forest",
+  "trained_at": "2026-09-15T18:13:13.693843"
 }

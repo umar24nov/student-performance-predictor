@@ -1,8 +1,20 @@
 
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, lazy, Suspense } from "react";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+import API_URL, { getToken, getUser, saveAuth, clearAuth } from "./api";
+
+const Auth          = lazy(() => import("./Auth"));
+const Dashboard     = lazy(() => import("./Dashboard"));
+const ModelCompare  = lazy(() => import("./ModelCompare"));
+const StudySchedule = lazy(() => import("./StudySchedule"));
+const Chatbot       = lazy(() => import("./Chatbot"));
+
+const LazyPage = ({ children }) => (
+  <Suspense fallback={<div className="relative z-10 flex items-center justify-center min-h-[60vh]"><div className="w-10 h-10 border-2 border-blue-500/20 border-t-blue-400 rounded-full spinner"/></div>}>
+    {children}
+  </Suspense>
+);
 
 function smoothScrollTo(id) {
   const el = document.getElementById(id);
@@ -488,7 +500,7 @@ function ResourcePage({ onBack, tag, title, subtitle, items }) {
 }
 
 // ─── Navbar ────────────────────────────────────────────────────────────────────
-function Navbar({ page, onHome, onStartQuiz, onNavigate }) {
+function Navbar({ page, onHome, onStartQuiz, onNavigate, user, onAuthClick, onLogout }) {
   const [open, setOpen] = useState(false);
   const navClick = useCallback((id) => {
     setOpen(false);
@@ -508,6 +520,12 @@ function Navbar({ page, onHome, onStartQuiz, onNavigate }) {
           {[["how-it-works","How it Works"],["stats","Stats"],["reviews","Reviews"],["faq","FAQ"]].map(([id,l]) => (
             <button key={id} onClick={() => navClick(id)} className="text-sm font-medium text-slate-400 hover:text-white transition-colors">{l}</button>
           ))}
+          <button onClick={() => { setOpen(false); onNavigate("models"); }} className="text-sm font-medium text-slate-400 hover:text-white transition-colors">⚖️ Models</button>
+          {user ? (
+            <button onClick={() => { setOpen(false); onNavigate("dashboard"); }} className="text-sm font-medium text-violet-300 hover:text-violet-200 transition-colors">🧑‍🎓 Dashboard</button>
+          ) : (
+            <button onClick={() => { setOpen(false); onAuthClick(); }} className="text-sm font-medium text-violet-300 hover:text-violet-200 transition-colors">Log In</button>
+          )}
           <button onClick={() => { setOpen(false); onNavigate("rateus"); }} className="text-sm font-medium text-yellow-400 hover:text-yellow-300 transition-colors">★ Rate Us</button>
         </div>
         <div className="flex items-center gap-2">
@@ -527,7 +545,16 @@ function Navbar({ page, onHome, onStartQuiz, onNavigate }) {
           {[["how-it-works","How it Works"],["stats","Stats"],["reviews","Reviews"],["faq","FAQ"]].map(([id,l]) => (
             <button key={id} onClick={() => navClick(id)} className="text-sm font-medium text-slate-300 hover:text-white text-left py-1 transition-colors">{l}</button>
           ))}
+          <button onClick={() => { setOpen(false); onNavigate("models"); }} className="text-sm font-medium text-slate-300 text-left py-1">⚖️ Compare Models</button>
+          {user ? (
+            <button onClick={() => { setOpen(false); onNavigate("dashboard"); }} className="text-sm font-medium text-violet-300 text-left py-1">🧑‍🎓 Dashboard</button>
+          ) : (
+            <button onClick={() => { setOpen(false); onAuthClick(); }} className="text-sm font-medium text-violet-300 text-left py-1">Log In</button>
+          )}
           <button onClick={() => { setOpen(false); onNavigate("rateus"); }} className="text-sm font-medium text-yellow-400 text-left py-1">★ Rate Us</button>
+          {user && (
+            <button onClick={() => { setOpen(false); onLogout(); }} className="text-sm font-medium text-red-400/80 text-left py-1">Log out ({user.name.split(" ")[0]})</button>
+          )}
         </div>
       )}
     </nav>
@@ -586,6 +613,7 @@ export default function App() {
   const [analysis, setAnalysis] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState(null);
+  const [user,    setUser]    = useState(() => getUser());
 
   // Recompute question list whenever answers change (drives dynamic grade Qs)
   const questions = buildQuestions(answers);
@@ -616,8 +644,11 @@ export default function App() {
     setLoading(true); setError(null); setPage("quiz");
     try {
       const payload = buildPayload(answers);
+      const headers = { "Content-Type": "application/json" };
+      const token = getToken();
+      if (token) headers.Authorization = `Bearer ${token}`;
       const res = await fetch(`${API_URL}/predict`, {
-        method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(payload),
+        method: "POST", headers, body: JSON.stringify(payload),
       });
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || `Error ${res.status}`); }
       const data = await res.json();
@@ -635,6 +666,20 @@ export default function App() {
   function handleScrollTo(id) {
     if (page !== "home") { setPage("home"); setTimeout(() => smoothScrollTo(id), 150); }
     else smoothScrollTo(id);
+  }
+  function handleAuth(token, u) {
+    saveAuth(token, u);
+    setUser(u);
+    setPage("dashboard");
+  }
+  function handleLogout() {
+    clearAuth();
+    setUser(null);
+    setPage("home");
+  }
+  function requireAuth() {
+    if (user) setPage("dashboard");
+    else setPage("auth");
   }
 
   const STATIC = ["about","privacy","terms","contact","studytips","attendance","scholarship","counseling","rateus"];
@@ -660,7 +705,21 @@ export default function App() {
       <div className="fixed inset-0 pointer-events-none z-0"
         style={{background:"radial-gradient(ellipse 60% 40% at 15% 0%,rgba(79,142,247,.09),transparent 60%),radial-gradient(ellipse 50% 35% at 85% 100%,rgba(139,92,246,.07),transparent 55%)"}}/>
 
-      <Navbar page={page} onHome={goHome} onStartQuiz={startQuiz} onNavigate={navigate}/>
+      <Navbar page={page} onHome={goHome} onStartQuiz={startQuiz} onNavigate={navigate}
+        user={user} onAuthClick={requireAuth} onLogout={handleLogout}/>
+
+      {/* Auth */}
+      {page === "auth" && <LazyPage><Auth onAuth={handleAuth} onBack={goHome}/></LazyPage>}
+
+      {/* Feature pages */}
+      {page === "models"   && <LazyPage><ModelCompare onBack={goHome}/></LazyPage>}
+      {page === "schedule" && <LazyPage><StudySchedule onBack={goHome}/></LazyPage>}
+      {page === "chatbot"  && <LazyPage><Chatbot onBack={goHome}/></LazyPage>}
+      {page === "dashboard" && (
+        user
+          ? <LazyPage><Dashboard onStartQuiz={startQuiz} onPage={navigate} onBack={goHome}/></LazyPage>
+          : <LazyPage><Auth onAuth={handleAuth} onBack={goHome}/></LazyPage>
+      )}
 
       {/* Static pages */}
       {STATIC.includes(page) && (
@@ -736,6 +795,26 @@ export default function App() {
                   <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center font-extrabold text-sm mb-4">{n}</div>
                   <h3 className="font-bold text-sm mb-2">{t}</h3><p className="text-xs text-slate-400 leading-relaxed">{d}</p>
                 </div>
+              ))}
+            </div>
+          </section>
+
+          <section id="tools" className="max-w-6xl mx-auto px-4 sm:px-6 py-14">
+            <Tag color="emerald">Student Toolkit</Tag>
+            <h2 className="font-display text-3xl sm:text-4xl font-extrabold mt-4 mb-10 tracking-tight">More Than a Prediction</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {[
+                ["🔐","Account & Tracking","Save every prediction, build personal history, and track your progress semester to semester.",() => requireAuth()],
+                ["⚖️","Model Compare","See how 5 ML algorithms rank — with honest accuracy numbers, not marketing.",() => navigate("models")],
+                ["📅","Study Scheduler","Feed it your subjects and hours. Get a balanced weekly plan that targets weak spots.",() => navigate("schedule")],
+                ["🤖","Academic Assistant","Instant answers on attendance rules, scholarships, backlogs, and exam prep.",() => navigate("chatbot")],
+              ].map(([e,t,d,fn]) => (
+                <button key={t} onClick={fn} className="group bg-[#0d1220] border border-white/8 rounded-2xl p-6 text-left hover:border-emerald-500/40 hover:-translate-y-1 transition-all">
+                  <div className="text-3xl mb-4">{e}</div>
+                  <h3 className="font-bold text-sm mb-2">{t}</h3>
+                  <p className="text-xs text-slate-400 leading-relaxed group-hover:text-slate-300 transition-colors">{d}</p>
+                  <span className="inline-block text-xs font-bold text-emerald-400 mt-4 group-hover:translate-x-1 transition-transform">Open →</span>
+                </button>
               ))}
             </div>
           </section>

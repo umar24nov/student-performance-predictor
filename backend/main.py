@@ -3,34 +3,49 @@ AcademicAI — Student Performance Prediction API
 ================================================
 Author  : Mohammad Umar — B.Tech CSE
 Dataset : UCI Student Performance (Math) — student-mat.csv
-Model   : Random Forest Classifier (200 trees, 81% accuracy)
+Models  : 5 sklearn classifiers → Random Forest selected as primary
 
 Endpoints:
-  GET  /              → health check
-  POST /predict       → predict student performance
-  POST /save-response → save anonymous quiz response
-  POST /retrain       → retrain model with collected responses (requires API key)
-  GET  /model-info    → model metadata and stats
-  GET  /stats         → collected response statistics
+  GET    /                     → health check
+  POST   /predict              → predict performance (primary model)
+  POST   /predict-model/{name}  → predict with a specific model
+  POST   /save-response        → save anonymous quiz response
+  POST   /retrain              → retrain all models (requires API key)
+  GET    /model-info           → model metadata and stats
+  GET    /models               → all models' performance comparison
+  GET    /stats                → collected response statistics
+  POST   /register             → create account
+  POST   /login                → login → bearer token
+  POST   /logout               → invalidate token
+  GET    /me                   → current user profile
+  GET    /history              → user's past predictions
+  POST   /chatbot              → rule-based academic assistant
+  GET    /admin/stats          → admin analytics (requires ADMIN_KEY)
 """
 
-import os, json, csv, logging
+import os
+import csv
+import json
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import joblib
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Query
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Query, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-# ─── Logging setup ────────────────────────────────────────────────────────────
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-log = logging.getLogger(__name__)
+from db import (
+    init_db, create_user, verify_login, create_session, user_by_token,
+    delete_session, save_prediction, get_history, get_users_count,
+    get_predictions_count, get_prediction_distribution,
+)
+from chatbot import respond as chatbot_respond
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
 BASE_DIR       = os.path.dirname(os.path.abspath(__file__))
+MODELS_DIR     = os.path.join(BASE_DIR, "models")
 MODEL_PATH     = os.path.join(BASE_DIR, "model.pkl")
 SCALER_PATH    = os.path.join(BASE_DIR, "scaler.pkl")
 TARGET_ENC_PATH= os.path.join(BASE_DIR, "target_encoder.pkl")
@@ -46,41 +61,69 @@ ALLOWED_ORIGINS = [
     if o.strip()
 ]
 RETRAIN_API_KEY = os.getenv("RETRAIN_API_KEY", "")
+ADMIN_KEY       = os.getenv("ADMIN_KEY", "academicai-admin")
 
 NUMERIC_COLS = [
     'age', 'Medu', 'Fedu', 'traveltime', 'studytime', 'failures',
     'famrel', 'freetime', 'goout', 'Dalc', 'Walc', 'health', 'absences', 'G1', 'G2',
 ]
 
-# ─── Load model artifacts ─────────────────────────────────────────────────────
-def load_model_artifacts():
-    """Load all ML artifacts from disk. Called on startup and after retraining."""
+# ─── Model registry ───────────────────────────────────────────────────────────
+MODEL_REGISTRY = {}   # slug -> dict(model, scaler, label, primary, metrics)
+
+
+def _slug(name: str) -> str:
+    return name.lower().replace(" ", "_").replace("-", "_")
+
+
+def _load_single_model_artifacts():
+    """Load primary model + encoders + metadata."""
     global model, scaler, target_encoder, label_encoders, metadata, FEATURES, CATEGORICAL_COLS
-
-    model          = joblib.load(MODEL_PATH)
-    scaler         = joblib.load(SCALER_PATH)
-    target_encoder = joblib.load(TARGET_ENC_PATH)
-    label_encoders = joblib.load(LABEL_ENC_PATH)
-
+    model           = joblib.load(MODEL_PATH)
+    scaler          = joblib.load(SCALER_PATH)
+    target_encoder  = joblib.load(TARGET_ENC_PATH)
+    label_encoders  = joblib.load(LABEL_ENC_PATH)
     with open(METADATA_PATH) as f:
         metadata = json.load(f)
+    FEATURES          = metadata["features"]
+    CATEGORICAL_COLS  = metadata["categorical_cols"]
+    return metadata.get("primary_model", "Random Forest")
 
-    FEATURES       = metadata["features"]
-    CATEGORICAL_COLS = metadata["categorical_cols"]
 
-    log.info(f"Model loaded: {metadata['model_type']}, accuracy={metadata['accuracy']*100:.1f}%")
-    log.info(f"Classes: {metadata['target_classes']}")
+def load_model_artifacts():
+    global metadata
+    primary_name = _load_single_model_artifacts()
 
+    MODEL_REGISTRY.clear()
+    primary_slug = _slug(primary_name)
+    for name, perf in metadata.get("models", {}).items():
+        slug = _slug(name)
+        m_path = os.path.join(MODELS_DIR, f"{slug}.pkl")
+        s_path = os.path.join(MODELS_DIR, f"{slug}_scaler.pkl")
+        if os.path.isfile(m_path) and os.path.isfile(s_path):
+            MODEL_REGISTRY[slug] = {
+                "model":       joblib.load(m_path),
+                "scaler":      joblib.load(s_path),
+                "label":       name,
+                "primary":     slug == primary_slug,
+                "accuracy":    perf.get("accuracy"),
+                "cv_accuracy": perf.get("cv_accuracy"),
+                "f1":          perf.get("f1"),
+            }
+    print(f"[AcademicAI] Models loaded: {list(MODEL_REGISTRY.keys())}")
+    print(f"[AcademicAI] Primary model: {primary_name}")
+
+
+init_db()
 load_model_artifacts()
 
 # ─── FastAPI app ──────────────────────────────────────────────────────────────
 app = FastAPI(
     title="AcademicAI — Student Performance API",
-    description="Predicts whether a student will Pass, Fail, or be At-Risk based on academic and personal background.",
-    version="2.1.0"
+    description="Predicts Pass/Fail/At-Risk, multi-model comparison, user accounts, progress tracking, and an academic assistant.",
+    version="3.0.0"
 )
 
-# CORS — set ALLOWED_ORIGINS env var for production (comma-separated)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -89,59 +132,43 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ─── Request / Response schemas ───────────────────────────────────────────────
+# ─── Schemas ──────────────────────────────────────────────────────────────────
 
 class StudentInput(BaseModel):
-    """
-    All features a student provides through the quiz.
-    Each field maps directly to a column in the training dataset.
-    """
-    # Personal background
-    sex:        str  = Field(..., description="M or F")
-    age:        int  = Field(..., ge=15, le=35)
-    address:    str  = Field(..., description="U=urban, R=rural")
-    famsize:    str  = Field(..., description="GT3 or LE3")
-    Pstatus:    str  = Field(..., description="T=together, A=apart")
-
-    # Parent education (0=none, 1=primary, 2=middle, 3=secondary, 4=higher)
-    Medu:  int = Field(..., ge=0, le=4)
-    Fedu:  int = Field(..., ge=0, le=4)
-    Mjob:  str = Field(..., description="at_home/health/other/services/teacher")
-    Fjob:  str = Field(..., description="at_home/health/other/services/teacher")
-
-    # School context
-    reason:     str  = Field(..., description="course/home/other/reputation")
-    guardian:   str  = Field(..., description="mother/father/other")
-    traveltime: int  = Field(..., ge=1, le=4)
-    studytime:  int  = Field(..., ge=1, le=4)
-    failures:   int  = Field(..., ge=0, le=4)
-
-    # Yes/No fields
-    schoolsup:  str  = Field(..., description="yes or no")
-    famsup:     str  = Field(..., description="yes or no")
-    paid:       str  = Field(..., description="yes or no")
-    activities: str  = Field(..., description="yes or no")
-    nursery:    str  = Field(..., description="yes or no")
-    higher:     str  = Field(..., description="yes or no")
-    internet:   str  = Field(..., description="yes or no")
-    romantic:   str  = Field(..., description="yes or no")
-
-    # Social/lifestyle ratings (1-5)
+    sex:       str  = Field(..., description="M or F")
+    age:       int  = Field(..., ge=15, le=35)
+    address:   str  = Field(..., description="U=urban, R=rural")
+    famsize:   str  = Field(..., description="GT3 or LE3")
+    Pstatus:   str  = Field(..., description="T=together, A=apart")
+    Medu:     int   = Field(..., ge=0, le=4)
+    Fedu:     int   = Field(..., ge=0, le=4)
+    Mjob:     str   = Field(..., description="at_home/health/other/services/teacher")
+    Fjob:     str   = Field(..., description="at_home/health/other/services/teacher")
+    reason:   str   = Field(..., description="course/home/other/reputation")
+    guardian: str   = Field(..., description="mother/father/other")
+    traveltime: int = Field(..., ge=1, le=4)
+    studytime:  int = Field(..., ge=1, le=4)
+    failures:   int = Field(..., ge=0, le=4)
+    schoolsup:  str = Field(..., description="yes or no")
+    famsup:     str = Field(..., description="yes or no")
+    paid:       str = Field(..., description="yes or no")
+    activities: str = Field(..., description="yes or no")
+    nursery:    str = Field(..., description="yes or no")
+    higher:     str = Field(..., description="yes or no")
+    internet:   str = Field(..., description="yes or no")
+    romantic:   str = Field(..., description="yes or no")
     famrel:   int = Field(..., ge=1, le=5)
     freetime: int = Field(..., ge=1, le=5)
     goout:    int = Field(..., ge=1, le=5)
     Dalc:     int = Field(..., ge=1, le=5)
     Walc:     int = Field(..., ge=1, le=5)
     health:   int = Field(..., ge=1, le=5)
-
-    # Academic
-    absences: int   = Field(..., ge=0, le=100)
-    G1:       int   = Field(..., ge=0, le=20, description="First period grade")
-    G2:       int   = Field(..., ge=0, le=20, description="Second period grade")
+    absences: int = Field(..., ge=0, le=100)
+    G1:       int = Field(..., ge=0, le=20)
+    G2:       int = Field(..., ge=0, le=20)
 
 
 class SaveResponseRequest(BaseModel):
-    """Anonymous user response — numeric features used for model retraining."""
     features:          Dict[str, Any]
     prediction:        str
     confidence:        float
@@ -149,13 +176,43 @@ class SaveResponseRequest(BaseModel):
     timestamp:         str
 
 
-# ─── Helper: encode one student input ────────────────────────────────────────
+class RegisterRequest(BaseModel):
+    name:     str = Field(..., min_length=2, max_length=60)
+    email:    str = Field(..., max_length=120)
+    password: str = Field(..., min_length=6, max_length=128)
 
-def encode_input(data: StudentInput) -> pd.DataFrame:
-    """
-    Convert StudentInput into a scaled DataFrame ready for model.predict().
-    Applies the same label encoders and scaler used during training.
-    """
+
+class LoginRequest(BaseModel):
+    email:    str
+    password: str
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=500)
+
+
+# ─── Auth dependency ──────────────────────────────────────────────────────────
+
+def get_auth_user(authorization: Optional[str] = Header(None)):
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    token = authorization.split(" ", 1)[1].strip()
+    user = user_by_token(token)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired session.")
+    return {**user, "token": token}
+
+
+def _try_auth_user(authorization: Optional[str] = Header(None)):
+    if authorization and authorization.lower().startswith("bearer "):
+        return user_by_token(authorization.split(" ", 1)[1].strip())
+    return None
+
+
+# ─── Helper: encode one student input ─────────────────────────────────────────
+
+def encode_input(data: StudentInput, scaler_obj=None) -> np.ndarray:
+    scaler_obj = scaler_obj or scaler
     raw = {
         'sex': data.sex, 'age': data.age, 'address': data.address,
         'famsize': data.famsize, 'Pstatus': data.Pstatus,
@@ -170,29 +227,54 @@ def encode_input(data: StudentInput) -> pd.DataFrame:
         'Dalc': data.Dalc, 'Walc': data.Walc, 'health': data.health,
         'absences': data.absences, 'G1': data.G1, 'G2': data.G2,
     }
-
     df = pd.DataFrame([raw])
-
     for col in CATEGORICAL_COLS:
         if col in label_encoders:
             try:
                 df[col] = label_encoders[col].transform(df[col])
             except ValueError:
-                log.warning(f"Unknown value for {col}: {df[col].values[0]}, defaulting to 0")
                 df[col] = 0
-
     df = df[FEATURES]
-    return scaler.transform(df)
+    return scaler_obj.transform(df)
 
 
-# ─── Endpoints ────────────────────────────────────────────────────────────────
+def _build_result(pred_class, probabilities, model_used="Random Forest"):
+    confidence_scores = {
+        cls: round(float(prob) * 100, 1)
+        for cls, prob in zip(target_encoder.classes_, probabilities)
+    }
+    if pred_class in target_encoder.classes_:
+        idx = int(np.where(target_encoder.classes_ == pred_class)[0][0])
+        confidence = round(float(probabilities[idx]) * 100, 1)
+    else:
+        confidence = round(float(np.max(probabilities)) * 100, 1)
+    tips = {
+        "Pass":    "You're on track. Keep attending classes, stay consistent with your study routine, and don't get complacent. Small drops in attendance or study time can change this quickly.",
+        "Fail":    "Your profile shows warning signs, but this is fixable. Start by attending every class this week, increase your study time to at least 5 hours/week, and visit your professor to ask exactly what to focus on for exams.",
+        "At-Risk": "This is urgent. You need to act now — attend every class, meet your academic advisor this week, and clear any pending backlogs immediately. Consider reaching out to your college counseling cell for support.",
+    }
+    emojis = {"Pass": "🎓", "Fail": "📉", "At-Risk": "⚠️"}
+    return {
+        "prediction":        pred_class,
+        "emoji":             emojis.get(pred_class, "🎓"),
+        "confidence":        confidence,
+        "confidence_scores": confidence_scores,
+        "tip":               tips.get(pred_class, ""),
+        "model_used":        model_used,
+        "model_accuracy":    f"{metadata['accuracy'] * 100:.1f}%",
+        "cv_accuracy":       f"{metadata['cv_accuracy'] * 100:.1f}%",
+        "dataset_size":      metadata["dataset_size"],
+    }
+
+
+# ─── Public endpoints ─────────────────────────────────────────────────────────
 
 @app.get("/", summary="Health check")
 def root():
-    """Returns API status and model accuracy."""
     return {
         "status":         "✅ AcademicAI API is running!",
-        "model":          metadata["model_type"],
+        "primary_model":  metadata.get("primary_model", "Random Forest"),
+        "models":         list(MODEL_REGISTRY.keys()),
         "accuracy":       f"{metadata['accuracy'] * 100:.1f}%",
         "cv_accuracy":    f"{metadata['cv_accuracy'] * 100:.1f}%",
         "dataset_size":   metadata["dataset_size"],
@@ -200,97 +282,92 @@ def root():
     }
 
 
-@app.post("/predict", summary="Predict student performance")
-def predict(data: StudentInput):
-    """
-    Takes student background and returns:
-    - prediction: Pass / Fail / At-Risk
-    - confidence: % confidence in top prediction
-    - confidence_scores: % for all three classes
-    - tip: personalised advice based on outcome
-    """
+@app.post("/predict", summary="Predict using the best model")
+def predict(data: StudentInput, authorization: Optional[str] = Header(None)):
     try:
         X_scaled = encode_input(data)
-
         pred_encoded  = model.predict(X_scaled)[0]
         probabilities = model.predict_proba(X_scaled)[0]
         pred_class    = target_encoder.inverse_transform([pred_encoded])[0]
+        result = _build_result(pred_class, probabilities, metadata.get("primary_model", "Random Forest"))
 
-        confidence_scores = {
-            cls: round(float(prob) * 100, 1)
-            for cls, prob in zip(target_encoder.classes_, probabilities)
-        }
-
-        tips = {
-            "Pass":    "You're on track. Keep attending classes, stay consistent with your study routine, and don't get complacent. Small drops in attendance or study time can change this quickly.",
-            "Fail":    "Your profile shows warning signs, but this is fixable. Start by attending every class this week, increase your study time to at least 5 hours/week, and visit your professor to ask exactly what to focus on for exams.",
-            "At-Risk": "This is urgent. You need to act now — attend every class, meet your academic advisor this week, and clear any pending backlogs immediately. Consider reaching out to your college counseling cell for support.",
-        }
-
-        emojis = {"Pass": "🎓", "Fail": "📉", "At-Risk": "⚠️"}
-
-        log.info(f"Prediction: {pred_class} ({confidence_scores[pred_class]}%)")
-
-        return {
-            "prediction":        pred_class,
-            "emoji":             emojis.get(pred_class, "🎓"),
-            "confidence":        round(float(probabilities[pred_encoded]) * 100, 1),
-            "confidence_scores": confidence_scores,
-            "tip":               tips.get(pred_class, ""),
-            "model_accuracy":    f"{metadata['accuracy'] * 100:.1f}%",
-            "cv_accuracy":       f"{metadata['cv_accuracy'] * 100:.1f}%",
-            "dataset_size":      metadata["dataset_size"],
-        }
-
+        user = _try_auth_user(authorization)
+        if user:
+            save_prediction(
+                user["id"], result["model_used"], pred_class,
+                result["confidence"], result["confidence_scores"],
+                features=data.model_dump(),
+            )
+        return result
+    except HTTPException:
+        raise
     except Exception as e:
-        log.error(f"Prediction error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
 
 
-@app.post("/save-response", summary="Save anonymous user response")
+@app.post("/predict-model/{name}", summary="Predict using a specific model")
+def predict_model(name: str, data: StudentInput):
+    slug = _slug(name)
+    if slug not in MODEL_REGISTRY:
+        raise HTTPException(status_code=404, detail=f"Unknown model. Available: {list(MODEL_REGISTRY.keys())}")
+    entry = MODEL_REGISTRY[slug]
+    try:
+        X_scaled = encode_input(data, entry["scaler"])
+        pred_encoded  = entry["model"].predict(X_scaled)[0]
+        probabilities = entry["model"].predict_proba(X_scaled)[0]
+        pred_class    = target_encoder.inverse_transform([pred_encoded])[0]
+        return _build_result(pred_class, probabilities, entry["label"])
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
+
+
+@app.get("/models", summary="All models' performance comparison")
+def models_overview():
+    return {
+        "primary_model": metadata.get("primary_model"),
+        "models": [
+            {
+                "slug": slug,
+                "name": e["label"],
+                "is_primary": e["primary"],
+                "accuracy": e.get("accuracy"),
+                "cv_accuracy": e.get("cv_accuracy"),
+                "f1": e.get("f1"),
+            }
+            for slug, e in MODEL_REGISTRY.items()
+        ],
+    }
+
+
+@app.post("/save-response", summary="Save anonymous quiz response")
 def save_response(data: SaveResponseRequest):
-    """
-    Saves each user's numeric feature values + prediction to a CSV.
-    Data format matches the training dataset — ready for retraining via /retrain.
-    No personal identifiers are collected.
-    """
     try:
         file_exists = os.path.isfile(RESPONSES_PATH)
-
-        # Build fixed columns: metadata + feature columns matching original dataset
         row = {
             "timestamp":  data.timestamp,
             "prediction": data.prediction,
             "confidence": data.confidence,
             **{f"prob_{k}": v for k, v in data.confidence_scores.items()},
         }
-        # Add feature values directly — same column names as training data
         for feat in FEATURES:
             row[feat] = data.features.get(feat, "")
-
-        # Use a fixed field order so rows never misalign
         fieldnames = list(row.keys())
-
         with open(RESPONSES_PATH, "a", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
             if not file_exists:
                 writer.writeheader()
             writer.writerow(row)
-
-        log.info(f"Response saved: {data.prediction}")
         return {"status": "saved"}
-
     except Exception as e:
-        log.error(f"Save response error: {e}")
         return {"status": "skipped", "reason": str(e)}
 
 
 @app.get("/stats", summary="Collected responses statistics")
 def get_stats():
-    """Returns statistics about collected user responses (for admin review)."""
     if not os.path.isfile(RESPONSES_PATH):
         return {"total_responses": 0, "message": "No responses collected yet"}
-
     try:
         df = pd.read_csv(RESPONSES_PATH)
         dist = df["prediction"].value_counts().to_dict() if "prediction" in df.columns else {}
@@ -303,151 +380,10 @@ def get_stats():
         return {"error": str(e)}
 
 
-@app.post("/retrain", summary="Retrain model with collected responses")
-def retrain(background_tasks: BackgroundTasks, api_key: str = Query(None)):
-    """
-    Triggers model retraining using:
-    1. Original UCI dataset
-    2. All collected user responses from /save-response
-
-    Requires RETRAIN_API_KEY env var to be set. If not set, endpoint is open.
-    """
-    if RETRAIN_API_KEY and api_key != RETRAIN_API_KEY:
-        raise HTTPException(status_code=403, detail="Invalid or missing API key.")
-
-    if not os.path.isfile(RESPONSES_PATH):
-        raise HTTPException(status_code=400, detail="No collected responses yet. Use the app to gather data first.")
-
-    background_tasks.add_task(_retrain_background)
-    return {"status": "Retraining started in background. Check /model-info for updates."}
-
-
-def _retrain_background():
-    """
-    Background task: combine original data + user responses, retrain, save.
-    Supports both new format (direct feature columns) and legacy format (ans_ prefix).
-    """
-    from sklearn.ensemble import RandomForestClassifier
-    from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
-    from sklearn.preprocessing import LabelEncoder, StandardScaler
-    from sklearn.metrics import accuracy_score
-
-    log.info("Starting background retraining...")
-
-    try:
-        # ── Load original dataset ────────────────────────────────────────────
-        df_orig = pd.read_csv(ORIGINAL_DATA, sep=';')
-        df_orig['target'] = df_orig['G3'].apply(
-            lambda g: 'At-Risk' if g == 0 else ('Fail' if g < 10 else 'Pass')
-        )
-
-        # ── Load collected responses ─────────────────────────────────────────
-        df_resp = pd.read_csv(RESPONSES_PATH)
-        log.info(f"Combining {len(df_orig)} original + {len(df_resp)} collected samples")
-
-        # Extract feature columns — support both formats:
-        #   New format: columns named 'sex', 'age', etc. (direct)
-        #   Legacy format: columns named 'ans_sex', 'ans_age', etc.
-        resp_features = {}
-        for feat in FEATURES:
-            if feat in df_resp.columns:
-                resp_features[feat] = df_resp[feat]
-            elif f"ans_{feat}" in df_resp.columns:
-                resp_features[feat] = df_resp[f"ans_{feat}"]
-
-        usable = sum(1 for f in FEATURES if f in resp_features)
-
-        if usable >= len(FEATURES) * 0.7:
-            df_resp_features = pd.DataFrame(resp_features)
-            df_resp_features['target'] = df_resp['prediction']
-
-            # Ensure numeric columns are actually numeric (handles string ranges)
-            for col in NUMERIC_COLS:
-                if col in df_resp_features.columns:
-                    df_resp_features[col] = pd.to_numeric(df_resp_features[col], errors='coerce')
-
-            # Only keep rows where all features are valid (no NaN after coercion)
-            df_resp_features = df_resp_features.dropna(subset=FEATURES)
-
-            if len(df_resp_features) > 0:
-                df_combined = pd.concat(
-                    [df_orig[FEATURES + ['target']], df_resp_features[FEATURES + ['target']]],
-                    ignore_index=True
-                )
-                log.info(f"Added {len(df_resp_features)} valid response rows")
-            else:
-                df_combined = df_orig[FEATURES + ['target']].copy()
-                log.warning("Response rows contained invalid feature values — using only original data")
-        else:
-            df_combined = df_orig[FEATURES + ['target']].copy()
-            log.warning(f"Only {usable}/{len(FEATURES)} features found in responses — using only original data")
-
-        # ── Encode features ──────────────────────────────────────────────────
-        X = df_combined[FEATURES].copy()
-        y = df_combined['target'].copy()
-
-        new_label_encoders = {}
-        for col in CATEGORICAL_COLS:
-            le = LabelEncoder()
-            X[col] = le.fit_transform(X[col].astype(str))
-            new_label_encoders[col] = le
-
-        new_target_encoder = LabelEncoder()
-        y_encoded = new_target_encoder.fit_transform(y)
-
-        # ── Train ────────────────────────────────────────────────────────────
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y_encoded, test_size=0.2, random_state=42, stratify=y_encoded
-        )
-        new_scaler = StandardScaler()
-        X_train_s = new_scaler.fit_transform(X_train)
-        X_test_s  = new_scaler.transform(X_test)
-
-        new_model = RandomForestClassifier(
-            n_estimators=200, max_depth=12, min_samples_split=4,
-            class_weight='balanced', random_state=42, n_jobs=-1
-        )
-        new_model.fit(X_train_s, y_train)
-
-        # ── Evaluate ─────────────────────────────────────────────────────────
-        acc    = accuracy_score(y_test, new_model.predict(X_test_s))
-        cv     = StratifiedKFold(5, shuffle=True, random_state=42)
-        # Fit scaler on training data only, then evaluate CV on full dataset
-        cv_acc = cross_val_score(new_model, new_scaler.transform(X), y_encoded, cv=cv)
-
-        log.info(f"Retrained model accuracy: {acc*100:.1f}% (CV: {cv_acc.mean()*100:.1f}%)")
-
-        # ── Save updated artifacts ────────────────────────────────────────────
-        joblib.dump(new_model,          MODEL_PATH)
-        joblib.dump(new_scaler,         SCALER_PATH)
-        joblib.dump(new_target_encoder, TARGET_ENC_PATH)
-        joblib.dump(new_label_encoders, LABEL_ENC_PATH)
-
-        feat_imp = sorted(zip(FEATURES, new_model.feature_importances_), key=lambda x: x[1], reverse=True)
-        metadata_new = {
-            **metadata,
-            "accuracy":       round(float(acc), 4),
-            "cv_accuracy":    round(float(cv_acc.mean()), 4),
-            "cv_std":         round(float(cv_acc.std()), 4),
-            "dataset_size":   int(len(df_combined)),
-            "top_features":   [f for f, _ in feat_imp[:10]],
-            "last_retrained": datetime.now().isoformat(),
-        }
-        with open(METADATA_PATH, "w") as f:
-            json.dump(metadata_new, f, indent=2)
-
-        load_model_artifacts()
-        log.info("Retraining complete — model reloaded")
-
-    except Exception as e:
-        log.error(f"Retraining failed: {e}", exc_info=True)
-
-
 @app.get("/model-info", summary="Model metadata and performance stats")
 def model_info():
-    """Returns current model type, accuracy, top features, and dataset info."""
     return {
-        "model_type":      metadata["model_type"],
+        "primary_model":   metadata["model_type"],
         "accuracy":        f"{metadata['accuracy'] * 100:.1f}%",
         "cv_accuracy":     f"{metadata['cv_accuracy'] * 100:.1f}%",
         "cv_std":          f"{metadata.get('cv_std', 0) * 100:.1f}%",
@@ -458,3 +394,88 @@ def model_info():
         "last_retrained":  metadata.get("last_retrained", "original training"),
         "dataset":         metadata.get("dataset", "UCI Student Performance"),
     }
+
+
+# ─── Auth endpoints ───────────────────────────────────────────────────────────
+
+@app.post("/register", summary="Create account")
+def register(req: RegisterRequest):
+    ok, data = create_user(req.name, req.email, req.password)
+    if not ok:
+        raise HTTPException(status_code=400, detail=data)
+    token = create_session(data["id"])
+    return {"token": token, "user": data}
+
+
+@app.post("/login", summary="Login")
+def login(req: LoginRequest):
+    user = verify_login(req.email, req.password)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Incorrect email or password.")
+    token = create_session(user["id"])
+    return {
+        "token": token,
+        "user": {"id": user["id"], "name": user["name"], "email": user["email"]},
+    }
+
+
+@app.post("/logout", summary="Logout")
+def logout(user: dict = Depends(get_auth_user)):
+    delete_session(user["token"])
+    return {"status": "logged_out"}
+
+
+@app.get("/me", summary="Current user profile")
+def me(user: dict = Depends(get_auth_user)):
+    return {"user": {"id": user["id"], "name": user["name"], "email": user["email"]}}
+
+
+@app.get("/history", summary="Logged-in user's past predictions")
+def history(user: dict = Depends(get_auth_user)):
+    return {"history": get_history(user["id"], limit=50)}
+
+
+# ─── Chatbot ──────────────────────────────────────────────────────────────────
+
+@app.post("/chatbot", summary="Academic Q&A assistant")
+def chat(req: ChatRequest):
+    return {"reply": chatbot_respond(req.message)}
+
+
+# ─── Admin ────────────────────────────────────────────────────────────────────
+
+@app.get("/admin/stats", summary="Admin analytics")
+def admin_stats(api_key: str = Query(None)):
+    if ADMIN_KEY and api_key != ADMIN_KEY:
+        raise HTTPException(status_code=403, detail="Invalid admin key.")
+    anon = get_stats()
+    anon_count = anon.get("total_responses", 0) if isinstance(anon, dict) else 0
+    return {
+        "users":                     get_users_count(),
+        "predictions":               get_predictions_count(),
+        "prediction_distribution":   get_prediction_distribution(),
+        "anon_responses":            anon_count,
+        "models":                    list(MODEL_REGISTRY.keys()),
+    }
+
+
+# ─── Retraining ───────────────────────────────────────────────────────────────
+
+@app.post("/retrain", summary="Retrain all models with collected responses")
+def retrain(background_tasks: BackgroundTasks, api_key: str = Query(None)):
+    if RETRAIN_API_KEY and api_key != RETRAIN_API_KEY:
+        raise HTTPException(status_code=403, detail="Invalid or missing API key.")
+    if not os.path.isfile(RESPONSES_PATH):
+        raise HTTPException(status_code=400, detail="No collected responses yet. Use the app to gather data first.")
+    background_tasks.add_task(_retrain_background)
+    return {"status": "Retraining started in background. Check /model-info for updates."}
+
+
+def _retrain_background():
+    from train_models import main as retrain_all
+    try:
+        retrain_all()
+        load_model_artifacts()
+        print("[AcademicAI] Retraining complete — all models reloaded")
+    except Exception as e:
+        print(f"[AcademicAI] Retraining failed: {e}")
