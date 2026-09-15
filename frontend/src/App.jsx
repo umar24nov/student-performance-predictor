@@ -608,8 +608,6 @@ export default function App() {
 
   function select(val) {
     setAnswers(p => ({ ...p, [current.id]: val }));
-    // Choice/yes-no answers advance on select so an option never stays "marked"
-    if (current?.type !== "number" && !isLast) setQIndex(i => i + 1);
   }
   function goBack()    { if (qIndex > 0) setQIndex(i => i-1); }
   function goNext()    { if (!canNext) return; if (isLast) { submitPrediction(); return; } setQIndex(i => i+1); }
