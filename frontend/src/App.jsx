@@ -468,35 +468,46 @@ function ResourcePage({ onBack, tag, title, subtitle, items }) {
 // ─── Navbar ────────────────────────────────────────────────────────────────────
 function Navbar({ page, onHome, onStartQuiz, onNavigate, user, onAuthClick, onLogout }) {
   const [open, setOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
   const navClick = useCallback((id) => {
     setOpen(false);
     if (page !== "home") { onHome(); setTimeout(() => smoothScrollTo(id), 150); }
     else smoothScrollTo(id);
   }, [page, onHome]);
 
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 12);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  const links = [["how-it-works","How it Works"],["stats","Stats"],["reviews","Reviews"],["faq","FAQ"]];
+
   return (
-    <nav className="sticky top-0 z-50 bg-[#080b14]/90 backdrop-blur-xl border-b border-white/8">
+    <nav className={`sticky top-0 z-50 transition-all duration-300 border-b backdrop-blur-xl
+      ${scrolled ? "bg-[#080b14]/85 border-white/10 shadow-lg shadow-black/30" : "bg-[#080b14]/55 border-white/5"}`}>
       <div className="max-w-6xl mx-auto px-4 sm:px-6 flex items-center justify-between h-16">
         <button onClick={() => { setOpen(false); onHome(); window.scrollTo({top:0,behavior:"smooth"}); }}
-          className="flex items-center gap-2 font-bold text-lg tracking-tight">
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center text-base shrink-0">🎓</div>
-          AcademicAI
+          className="flex items-center gap-2 font-bold text-lg tracking-tight group">
+          <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center text-base shrink-0 shadow-lg shadow-blue-500/20 group-hover:scale-105 transition-transform">🎓</div>
+          <span className="bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent">AcademicAI</span>
         </button>
         <div className="hidden md:flex items-center gap-5">
-          {[["how-it-works","How it Works"],["stats","Stats"],["reviews","Reviews"],["faq","FAQ"]].map(([id,l]) => (
-            <button key={id} onClick={() => navClick(id)} className="text-sm font-medium text-slate-400 hover:text-white transition-colors">{l}</button>
+          {links.map(([id,l]) => (
+            <button key={id} onClick={() => navClick(id)} className="nav-link text-sm font-medium text-slate-400 hover:text-white transition-colors">{l}</button>
           ))}
-          <button onClick={() => { setOpen(false); onNavigate("models"); }} className="text-sm font-medium text-slate-400 hover:text-white transition-colors">⚖️ Models</button>
+          <button onClick={() => { setOpen(false); onNavigate("models"); }} className="nav-link text-sm font-medium text-slate-400 hover:text-white transition-colors">⚖️ Models</button>
           {user ? (
-            <button onClick={() => { setOpen(false); onNavigate("dashboard"); }} className="text-sm font-medium text-violet-300 hover:text-violet-200 transition-colors">🧑‍🎓 Dashboard</button>
+            <button onClick={() => { setOpen(false); onNavigate("dashboard"); }} className="nav-link text-sm font-medium text-violet-300 hover:text-violet-200 transition-colors">🧑‍🎓 {user.name.split(" ")[0]}</button>
           ) : (
-            <button onClick={() => { setOpen(false); onAuthClick(); }} className="text-sm font-medium text-violet-300 hover:text-violet-200 transition-colors">Log In</button>
+            <button onClick={() => { setOpen(false); onAuthClick(); }} className="nav-link text-sm font-medium text-violet-300 hover:text-violet-200 transition-colors">Log In</button>
           )}
-          <button onClick={() => { setOpen(false); onNavigate("rateus"); }} className="text-sm font-medium text-yellow-400 hover:text-yellow-300 transition-colors">★ Rate Us</button>
+          <button onClick={() => { setOpen(false); onNavigate("rateus"); }} className="nav-link text-sm font-medium text-yellow-400 hover:text-yellow-300 transition-colors">★ Rate Us</button>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => { setOpen(false); onStartQuiz(); }}
-            className="px-4 py-2 rounded-xl bg-gradient-to-r from-blue-500 to-violet-600 text-sm font-bold hover:-translate-y-0.5 hover:shadow-lg transition-all whitespace-nowrap">
+            className="btn-shine px-4 py-2 rounded-xl bg-gradient-to-r from-blue-500 to-violet-600 text-sm font-bold hover:-translate-y-0.5 hover:shadow-lg hover:shadow-blue-500/25 transition-all whitespace-nowrap">
             Check My Score →
           </button>
           <button onClick={() => setOpen(o => !o)} className="md:hidden w-9 h-9 flex flex-col justify-center items-center gap-1.5">
@@ -507,8 +518,8 @@ function Navbar({ page, onHome, onStartQuiz, onNavigate, user, onAuthClick, onLo
         </div>
       </div>
       {open && (
-        <div className="md:hidden bg-[#0d1220] border-t border-white/8 px-5 py-4 flex flex-col gap-3">
-          {[["how-it-works","How it Works"],["stats","Stats"],["reviews","Reviews"],["faq","FAQ"]].map(([id,l]) => (
+        <div className="md:hidden bg-[#0d1220]/95 backdrop-blur-xl border-t border-white/8 px-5 py-4 flex flex-col gap-3 animate-fadeUp">
+          {links.map(([id,l]) => (
             <button key={id} onClick={() => navClick(id)} className="text-sm font-medium text-slate-300 hover:text-white text-left py-1 transition-colors">{l}</button>
           ))}
           <button onClick={() => { setOpen(false); onNavigate("models"); }} className="text-sm font-medium text-slate-300 text-left py-1">⚖️ Compare Models</button>
@@ -532,6 +543,7 @@ function Footer({ onNavigate, onStartQuiz, onScrollTo }) {
   const go = (p) => { onNavigate(p); window.scrollTo({top:0,behavior:"smooth"}); };
   return (
     <footer className="relative z-10 border-t border-white/8 bg-[#06080f]/90 pt-12 pb-8 mt-4">
+      <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-blue-500/40 to-transparent"/>
       <div className="max-w-6xl mx-auto px-4 sm:px-6">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-8 mb-10">
           <div className="col-span-2 sm:col-span-1">
@@ -555,13 +567,13 @@ function Footer({ onNavigate, onStartQuiz, onScrollTo }) {
         </div>
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-6 border-t border-white/8">
           <span className="text-xs text-slate-500">
-            © 2025 AcademicAI · Built by{" "}
-            <a href="https://www.linkedin.com/in/mohammadumarfarook" target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 transition-colors">Mohammad Umar</a>
+            © 2026 AcademicAI · Built by{" "}
+            <a href="https://www.linkedin.com/in/mohammadumarfarook" target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 hover:underline underline-offset-4 transition-colors">Mohammad Umar</a>
             {" "}(B.Tech CSE)
           </span>
           <div className="flex flex-wrap justify-center gap-2">
             {["⚡ Free Forever","🤖 AI Powered","🎓 Made for University Students"].map(b => (
-              <span key={b} className="text-xs px-3 py-1 rounded-lg bg-white/5 border border-white/8 text-slate-400">{b}</span>
+              <span key={b} className="text-xs px-3 py-1 rounded-lg bg-white/5 border border-white/8 text-slate-400 hover:border-white/15 hover:bg-white/8 hover:text-slate-300 transition-all">{b}</span>
             ))}
           </div>
         </div>
@@ -664,8 +676,6 @@ export default function App() {
         .animate-fadeUp { animation:fadeUp .4s ease both; }
         .animate-popIn  { animation:popIn .45s cubic-bezier(.175,.885,.32,1.275) both; }
         .spinner        { animation:spin .75s linear infinite; }
-        ::-webkit-scrollbar{width:4px;}
-        ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:99px;}
       `}</style>
 
       <div className="fixed inset-0 pointer-events-none z-0"
@@ -674,6 +684,8 @@ export default function App() {
       <Navbar page={page} onHome={goHome} onStartQuiz={startQuiz} onNavigate={navigate}
         user={user} onAuthClick={requireAuth} onLogout={handleLogout}/>
 
+      {/* Page content — keyed so view transitions replay on navigation */}
+      <div key={page} className="animate-pageFade">
       {/* Auth */}
       {page === "auth" && <LazyPage><Auth onAuth={handleAuth} onBack={goHome}/></LazyPage>}
 
@@ -754,7 +766,8 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="bg-[#0d1220] border border-white/8 rounded-3xl p-6 sm:p-8 animate-fadeUp">
+              <div key={qIndex} className="relative bg-[#0d1220] border border-white/8 rounded-3xl p-6 sm:p-8 animate-fadeUp overflow-hidden">
+                <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-blue-500 via-violet-500 to-transparent"/>
                 <div className="text-xs font-bold tracking-widest uppercase text-blue-400 mb-2">{current.icon} {current.section}</div>
                 <p className="text-lg sm:text-xl font-bold leading-snug mb-1.5">{current.q}</p>
                 {current.hint && <p className="text-sm text-slate-400 mb-5 leading-relaxed">{current.hint}</p>}
@@ -771,8 +784,8 @@ export default function App() {
                     <button onClick={goBack} className="px-5 py-3 rounded-xl border border-white/10 text-slate-400 text-sm font-bold hover:border-white/20 hover:text-white transition-all">← Back</button>
                   )}
                   <button onClick={goNext} disabled={!canNext}
-                    className={`flex-1 py-3.5 rounded-xl text-sm font-bold transition-all
-                      ${isLast ? "bg-gradient-to-r from-emerald-500 to-violet-600" : "bg-gradient-to-r from-blue-500 to-violet-600"}
+                    className={`btn-shine flex-1 py-3.5 rounded-xl text-sm font-bold transition-all
+                      ${isLast ? "bg-gradient-to-r from-emerald-500 to-violet-600 hover:shadow-emerald-500/20" : "bg-gradient-to-r from-blue-500 to-violet-600 hover:shadow-blue-500/20"}
                       ${canNext ? "hover:-translate-y-0.5 hover:shadow-lg" : "opacity-35 cursor-not-allowed"}`}>
                     {isLast ? "🔮 Predict My Performance" : "Continue →"}
                   </button>
@@ -790,6 +803,8 @@ export default function App() {
           )}
         </div>
       )}
+
+      </div>{/* end page content */}
     </div>
   );
 }

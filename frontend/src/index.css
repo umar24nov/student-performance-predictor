@@ -1,3 +1,92 @@
 /* Global styles — Tailwind base import */
 /* This file is required by main.jsx */
 @import "tailwindcss";
+
+/* ─── Base ─────────────────────────────────────────────────────────────── */
+html { color-scheme: dark; scroll-behavior: smooth; }
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* ─── Text selection ──────────────────────────────────────────────────── */
+::selection { background: rgba(129, 140, 248, .35); color: #fff; }
+::-moz-selection { background: rgba(129, 140, 248, .35); color: #fff; }
+
+/* ─── Scrollbar ───────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: #0a0e17; }
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, .22);
+  border-radius: 99px;
+  border: 3px solid #0a0e17;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, .42); }
+::-webkit-scrollbar-corner { background: #0a0e17; }
+* { scrollbar-width: thin; scrollbar-color: rgba(148, 163, 184, .25) #0a0e17; }
+
+/* ─── Accessibility ───────────────────────────────────────────────────── */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid rgba(99, 102, 241, .75);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+/* ─── Page transition ─────────────────────────────────────────────────── */
+@keyframes pageFade {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-pageFade { animation: pageFade .45s cubic-bezier(.22, 1, .36, 1) both; }
+
+/* ─── Button shine sweep ──────────────────────────────────────────────── */
+.btn-shine { position: relative; overflow: hidden; isolation: isolate; }
+.btn-shine::after {
+  content: "";
+  position: absolute;
+  top: 0; left: -80%;
+  height: 100%; width: 45%;
+  transform: skewX(-20deg);
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.18), transparent);
+  animation: shine 3.2s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes shine {
+  0%   { left: -80%; }
+  60%  { left: 135%; }
+  100% { left: 135%; }
+}
+
+/* ─── Nav link underline slide ────────────────────────────────────────── */
+.nav-link { position: relative; }
+.nav-link::after {
+  content: "";
+  position: absolute;
+  left: 0; bottom: -5px;
+  height: 2px; width: 0%;
+  background: linear-gradient(90deg, #60a5fa, #a78bfa);
+  border-radius: 2px;
+  transition: width .28s cubic-bezier(.22, 1, .36, 1);
+}
+.nav-link:hover::after { width: 100%; }
+
+/* ─── Card lift default ───────────────────────────────────────────────── */
+.card-lift {
+  transition: transform .25s ease, box-shadow .25s ease, border-color .25s ease;
+}
+.card-lift:hover { transform: translateY(-3px); }
+
+/* ─── Respect reduced motion ──────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+  html { scroll-behavior: auto; }
+}

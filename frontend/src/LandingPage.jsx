@@ -172,7 +172,7 @@ function QuickPredict({ onFullQuiz }) {
               </div>
               {error && <div className="mb-4 bg-red-500/10 border border-red-500/30 rounded-xl p-3 text-xs text-red-300">⚠️ {error}</div>}
               <button onClick={onFullQuiz}
-                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-blue-500 to-violet-600 text-sm font-bold hover:-translate-y-0.5 hover:shadow-lg transition-all">
+                className="btn-shine w-full py-3.5 rounded-xl bg-gradient-to-r from-blue-500 to-violet-600 text-sm font-bold hover:-translate-y-0.5 hover:shadow-lg transition-all">
                 Get my full personalised plan →
               </button>
             </>
@@ -239,7 +239,7 @@ export default function LandingPage({ onStartQuiz, onNavigate, onAuth }) {
               </p>
               <div className="flex flex-wrap gap-3 mb-8">
                 <button onClick={onStartQuiz}
-                  className="group relative px-7 py-4 rounded-2xl bg-gradient-to-r from-blue-500 to-violet-600 font-bold text-base hover:-translate-y-1 hover:shadow-2xl hover:shadow-blue-500/30 transition-all overflow-hidden">
+                  className="btn-shine group relative px-7 py-4 rounded-2xl bg-gradient-to-r from-blue-500 to-violet-600 font-bold text-base hover:-translate-y-1 hover:shadow-2xl hover:shadow-blue-500/30 transition-all overflow-hidden">
                   <span className="relative z-10">🔮 Predict My Performance</span>
                 </button>
                 <button onClick={onAuth}
@@ -523,7 +523,7 @@ export default function LandingPage({ onStartQuiz, onNavigate, onAuth }) {
                   Free, takes a few minutes, and might change how you approach your studies.
                 </p>
                 <button onClick={onStartQuiz}
-                  className="group px-10 py-4 rounded-2xl bg-gradient-to-r from-blue-500 to-violet-600 font-bold text-lg hover:-translate-y-1 hover:shadow-2xl hover:shadow-blue-500/30 transition-all relative overflow-hidden">
+                  className="btn-shine group px-10 py-4 rounded-2xl bg-gradient-to-r from-blue-500 to-violet-600 font-bold text-lg hover:-translate-y-1 hover:shadow-2xl hover:shadow-blue-500/30 transition-all relative overflow-hidden">
                   <span className="relative z-10">🔮 Start My Prediction</span>
                 </button>
                 <div className="flex justify-center gap-6 mt-8 text-xs text-slate-500">
