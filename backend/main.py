@@ -100,16 +100,23 @@ def load_model_artifacts():
         slug = _slug(name)
         m_path = os.path.join(MODELS_DIR, f"{slug}.pkl")
         s_path = os.path.join(MODELS_DIR, f"{slug}_scaler.pkl")
-        if os.path.isfile(m_path) and os.path.isfile(s_path):
+        if not (os.path.isfile(m_path) and os.path.isfile(s_path)):
+            print(f"[AcademicAI] Skipping '{name}': artifact missing")
+            continue
+        try:
+            entry = joblib.load(m_path)
+            scaler_entry = joblib.load(s_path)
             MODEL_REGISTRY[slug] = {
-                "model":       joblib.load(m_path),
-                "scaler":      joblib.load(s_path),
+                "model":       entry,
+                "scaler":      scaler_entry,
                 "label":       name,
                 "primary":     slug == primary_slug,
                 "accuracy":    perf.get("accuracy"),
                 "cv_accuracy": perf.get("cv_accuracy"),
                 "f1":          perf.get("f1"),
             }
+        except Exception as e:
+            print(f"[AcademicAI] Skipping '{name}' (failed to load: {e})")
     print(f"[AcademicAI] Models loaded: {list(MODEL_REGISTRY.keys())}")
     print(f"[AcademicAI] Primary model: {primary_name}")
 

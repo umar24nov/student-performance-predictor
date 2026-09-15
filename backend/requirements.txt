@@ -1,8 +1,12 @@
-fastapi>=0.100.0,<1.0
-uvicorn>=0.23.0,<1.0
-scikit-learn>=1.3.0,<2.0
-joblib>=1.3.0,<2.0
-numpy>=1.24.0,<3.0
-pandas>=2.0.0,<3.0
-pydantic>=2.0.0,<3.0
+# Exact versions match the local environment the ML models were trained with.
+# skops proxies: pinning prevents scikit-learn 1.9+/Python 3.14 from breaking
+# pickle loading of the committed models (NN/MLP references compiled modules).
+fastapi==0.135.1
+uvicorn==0.41.0
+scikit-learn==1.8.0
+joblib==1.5.3
+numpy==2.4.6
+scipy==1.17.1
+pandas==2.2.3
+pydantic==2.11.5
 python-multipart>=0.0.6
