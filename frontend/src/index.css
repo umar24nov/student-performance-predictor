@@ -36,6 +36,11 @@ select:focus-visible {
   outline-offset: 2px;
   border-radius: 8px;
 }
+/* No outline left behind after a plain mouse click/tap */
+button:focus:not(:focus-visible),
+a:focus:not(:focus-visible) {
+  outline: none;
+}
 
 /* ─── Page transition ─────────────────────────────────────────────────── */
 @keyframes pageFade {

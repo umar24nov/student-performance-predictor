@@ -253,10 +253,10 @@ function PageShell({ children, onBack }) {
 }
 
 /**
- * ChoiceGrid — hover-only highlight, no persistent selected state shown.
- * Selecting auto-advances the quiz so the card never stays "marked".
- * On the BACK journey (revisiting a question), we still show a subtle
- * indicator so the user knows what they picked — but it's a soft outline, not filled.
+ * ChoiceGrid — hover-only highlight while choosing. Selecting auto-advances
+ * the quiz so no option stays "marked" after click. On the BACK journey
+ * (revisiting a question) the previously picked option shows an emerald
+ * "✓ selected" indicator so the user knows what they chose.
  */
 function ChoiceGrid({ options, cols = 2, value, onSelect, autoAdvance = true }) {
   const [hovered, setHovered] = useState(null);
@@ -271,7 +271,7 @@ function ChoiceGrid({ options, cols = 2, value, onSelect, autoAdvance = true }) 
         return (
           <button
             key={o.v}
-            onClick={() => onSelect(o.v)}
+            onClick={() => { setHovered(null); onSelect(o.v); }}
             onMouseEnter={() => setHovered(o.v)}
             onMouseLeave={() => setHovered(null)}
             className={`flex items-center gap-2.5 p-3.5 rounded-xl border text-sm font-medium text-left transition-all duration-150
@@ -279,12 +279,12 @@ function ChoiceGrid({ options, cols = 2, value, onSelect, autoAdvance = true }) 
               ${isHov
                 ? "border-blue-400 bg-blue-500/15 text-white shadow shadow-blue-500/20 scale-[1.02]"
                 : isPrev
-                  ? "border-white/20 bg-white/5 text-slate-200"   // soft re-visited indicator
+                  ? "border-emerald-400/50 bg-emerald-500/10 text-white"   // previously selected (came back)
                   : "border-white/8 bg-white/3 text-slate-400"
               }`}
           >
             <span className={isMultiCol ? "text-2xl" : "text-xl leading-none"}>{o.e}</span>
-            <span className="leading-tight">{o.l}</span>
+            <span className="leading-tight">{o.l}{isPrev && <span className="ml-1.5 text-emerald-400">✓</span>}</span>
           </button>
         );
       })}
@@ -300,14 +300,14 @@ function YesNoInput({ value, onSelect }) {
         const isHov = hovered === o.v;
         const isPrev = value === o.v;
         return (
-          <button key={o.v} onClick={() => onSelect(o.v)}
+          <button key={o.v} onClick={() => { setHovered(null); onSelect(o.v); }}
             onMouseEnter={() => setHovered(o.v)} onMouseLeave={() => setHovered(null)}
             className={`flex items-center justify-center gap-3 py-4 rounded-xl border text-base font-semibold transition-all
               ${isHov
                 ? "border-blue-400 bg-blue-500/15 text-white scale-[1.02]"
-                : isPrev ? "border-white/20 bg-white/5 text-slate-200"
+                : isPrev ? "border-emerald-400/50 bg-emerald-500/10 text-white"
                 : "border-white/8 bg-white/3 text-slate-400"}`}>
-            <span className="text-2xl">{o.e}</span>{o.l}
+            <span className="text-2xl">{o.e}</span>{o.l}{isPrev && <span className="text-emerald-400">✓</span>}
           </button>
         );
       })}
@@ -606,7 +606,11 @@ export default function App() {
   // Scroll to top on page change
   useEffect(() => { window.scrollTo({top:0,behavior:"smooth"}); }, [page]);
 
-  function select(val) { setAnswers(p => ({...p, [current.id]: val})); }
+  function select(val) {
+    setAnswers(p => ({ ...p, [current.id]: val }));
+    // Choice/yes-no answers advance on select so an option never stays "marked"
+    if (current?.type !== "number" && !isLast) setQIndex(i => i + 1);
+  }
   function goBack()    { if (qIndex > 0) setQIndex(i => i-1); }
   function goNext()    { if (!canNext) return; if (isLast) { submitPrediction(); return; } setQIndex(i => i+1); }
 
