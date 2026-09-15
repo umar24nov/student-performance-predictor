@@ -1,10 +1,12 @@
 
 
-import { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
+import { useState, useEffect, useCallback, lazy, Suspense } from "react";
 
 import API_URL, { getToken, getUser, saveAuth, clearAuth } from "./api";
+import { buildPayload, GRADE_MAP } from "./utils/payload";
 
 const Auth          = lazy(() => import("./Auth"));
+const LandingPage   = lazy(() => import("./LandingPage"));
 const Dashboard     = lazy(() => import("./Dashboard"));
 const ModelCompare  = lazy(() => import("./ModelCompare"));
 const StudySchedule = lazy(() => import("./StudySchedule"));
@@ -32,42 +34,6 @@ async function saveResponse(payload, result) {
       }),
     });
   } catch (_) {}
-}
-
-const GRADE_MAP = { "0-2":1, "3-4":3.5, "5-6":5.5, "7-8":7.5, "9-10":9.5 };
-const ABS_MAP   = { "above90":2, "75-90":8, "60-75":18, "below60":30 };
-
-function buildPayload(a) {
-  const sem = parseInt(a.currentSem) || 1;
-  let g1Raw, g2Raw;
-  if (sem === 1) {
-    g1Raw = a.interGrade || "5-6";
-    g2Raw = a.interGrade || "5-6";
-  } else {
-    g1Raw = a.G1 || "5-6";
-    g2Raw = a.G2 || a.G1 || "5-6";
-  }
-  return {
-    sex: a.sex || "M",
-    age: parseInt(a.age) || 19,
-    address: a.address || "U",
-    famsize: "GT3", Pstatus: "T",
-    Medu: parseInt(a.Medu) || 2,
-    Fedu: parseInt(a.Fedu) || 2,
-    Mjob: "other", Fjob: "other",
-    reason: "course", guardian: "mother", traveltime: 1,
-    studytime: parseInt(a.studytime) || 2,
-    failures: parseInt(a.failures) || 0,
-    schoolsup: a.schoolsup || "no",
-    famsup: a.famsup || "yes",
-    paid: "no", activities: "no", nursery: "yes",
-    higher: "yes", internet: a.internet || "yes",
-    romantic: "no", famrel: 4, freetime: 3, goout: 3, Dalc: 1, Walc: 1,
-    health: parseInt(a.health) || 3,
-    absences: ABS_MAP[a.attendance] ?? 8,
-    G1: Math.round((GRADE_MAP[g1Raw] ?? 7.5) * 2),
-    G2: Math.round((GRADE_MAP[g2Raw] ?? 7.5) * 2),
-  };
 }
 
 function analyzeStudent(a) {
@@ -281,143 +247,6 @@ function PageShell({ children, onBack }) {
           ← Back to Home
         </button>
         {children}
-      </div>
-    </div>
-  );
-}
-
-// ─── Animated counter (counts up when scrolled into view) ─────────────────────
-function Counter({ target, suffix = "", duration = 1400 }) {
-  const [val, setVal] = useState(0);
-  const ref = useRef(null);
-  const started = useRef(false);
-  useEffect(() => {
-    if (!ref.current) return;
-    const obs = new IntersectionObserver(([e]) => {
-      if (e.isIntersecting && !started.current) {
-        started.current = true;
-        const t0 = performance.now();
-        const tick = (now) => {
-          const p = Math.min((now - t0) / duration, 1);
-          setVal(Math.round((1 - Math.pow(1 - p, 3)) * target));
-          if (p < 1) requestAnimationFrame(tick);
-        };
-        requestAnimationFrame(tick);
-        obs.disconnect();
-      }
-    }, { threshold: 0.5 });
-    obs.observe(ref.current);
-    return () => obs.disconnect();
-  }, [target, duration]);
-  return <span ref={ref}>{val}{suffix}</span>;
-}
-
-// ─── Quick Predict — 3-question teaser on the landing page ────────────────────
-const QUICK_STEPS = [
-  { id: "attendance", icon: "🏫", q: "What's your attendance like?", options: [
-    { v: "above90", l: "Above 90%" }, { v: "75-90", l: "75 – 90%" }, { v: "60-75", l: "60 – 75%" }, { v: "below60", l: "Below 60%" } ] },
-  { id: "studytime", icon: "📖", q: "Weekly study outside class?", options: [
-    { v: "1", l: "< 2 hrs" }, { v: "2", l: "2 – 5 hrs" }, { v: "3", l: "5 – 10 hrs" }, { v: "4", l: "10+ hrs" } ] },
-  { id: "health", icon: "💪", q: "How's your health these days?", options: [
-    { v: "1", l: "Poor" }, { v: "2", l: "Below avg" }, { v: "3", l: "Average" }, { v: "4", l: "Good" }, { v: "5", l: "Great" } ] },
-];
-
-function QuickPredict({ onFullQuiz }) {
-  const [step, setStep] = useState(0);
-  const [answers, setAnswers] = useState({});
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState(null);
-
-  const cur = QUICK_STEPS[step];
-
-  function pick(v) {
-    const next = { ...answers, [cur.id]: v };
-    setAnswers(next);
-    if (step < QUICK_STEPS.length - 1) setStep(step + 1);
-    else run(next);
-  }
-
-  async function run(next) {
-    setLoading(true); setError(null);
-    const payload = buildPayload(next);
-    try {
-      const res = await fetch(`${API_URL}/predict`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Prediction failed");
-      setResult(await res.json());
-    } catch (e) { setError(e.message); }
-    finally { setLoading(false); }
-  }
-
-  function reset() { setStep(0); setAnswers({}); setResult(null); setError(null); }
-
-  const barColors = { Pass: "#34d399", Fail: "#fb923c", "At-Risk": "#f87171" };
-
-  return (
-    <div className="max-w-2xl mx-auto -mt-2 relative z-20">
-      <div className="bg-[#0d1220]/95 backdrop-blur-xl border border-white/10 rounded-3xl p-6 sm:p-8 shadow-2xl">
-        {!result && !loading && (
-          <>
-            <div className="flex items-center justify-between mb-1">
-              <p className="text-xs font-bold tracking-widest uppercase text-violet-400">⚡ Quick Predict</p>
-              {step > 0 && <button onClick={reset} className="text-xs text-slate-500 hover:text-slate-300">Reset</button>}
-            </div>
-            <p className="text-xs text-slate-500 mb-5">3 questions · 20 seconds</p>
-            <div className="h-1 bg-white/6 rounded-full overflow-hidden mb-6">
-              <div className="h-full bg-gradient-to-r from-violet-500 to-blue-500 rounded-full transition-all duration-500" style={{ width: `${((step + 1) / QUICK_STEPS.length) * 100}%` }} />
-            </div>
-            <div className="flex items-center gap-3 mb-4">
-              <span className="text-2xl">{cur.icon}</span>
-              <p className="font-bold text-base">{cur.q}</p>
-            </div>
-            <div className="grid grid-cols-2 gap-2.5">
-              {cur.options.map(o => (
-                <button key={o.v} onClick={() => pick(o.v)}
-                  className="py-3.5 px-4 rounded-xl border border-white/10 bg-white/3 text-sm font-semibold text-slate-300 hover:border-violet-500/40 hover:text-white hover:bg-violet-500/10 transition-all">
-                  {o.l}
-                </button>
-              ))}
-            </div>
-          </>
-        )}
-
-        {loading && (
-          <div className="py-14 text-center">
-            <div className="w-10 h-10 border-2 border-violet-500/20 border-t-violet-400 rounded-full spinner mx-auto mb-4" />
-            <p className="text-slate-400 text-sm">Analysing your profile… ✨</p>
-          </div>
-        )}
-
-        {result && !loading && (
-          <>
-            <div className="flex items-center justify-between mb-4">
-              <p className="text-xs font-bold tracking-widest uppercase text-emerald-500">Your Quick Result</p>
-              <button onClick={reset} className="text-xs text-slate-500 hover:text-slate-300">Re-take →</button>
-            </div>
-            <div className="flex items-center gap-4 mb-5">
-              <span className="text-4xl">{result.emoji}</span>
-              <div>
-                <p className="font-display text-3xl font-extrabold" style={{ color: barColors[result.prediction] }}>{result.prediction}</p>
-                <p className="text-xs text-slate-400">AI confidence: <strong className="text-slate-200">{result.confidence}%</strong></p>
-              </div>
-            </div>
-            <div className="space-y-2 mb-5">
-              {Object.entries(result.confidence_scores || {}).map(([l, p]) => (
-                <div key={l} className="flex items-center gap-3">
-                  <span className="text-xs font-semibold w-16">{l}</span>
-                  <div className="flex-1 h-1.5 bg-white/6 rounded-full overflow-hidden">
-                    <div className="h-full rounded-full" style={{ width: `${p}%`, background: barColors[l] }} />
-                  </div>
-                  <span className="text-xs text-slate-400 w-8 text-right">{p}%</span>
-                </div>
-              ))}
-            </div>
-            {error && <div className="mb-4 bg-red-500/10 border border-red-500/30 rounded-xl p-3 text-xs text-red-300">⚠️ {error}</div>}
-            <button onClick={onFullQuiz} className="w-full py-3.5 rounded-xl bg-gradient-to-r from-blue-500 to-violet-600 text-sm font-bold hover:-translate-y-0.5 hover:shadow-lg transition-all">
-              Get my full personalised plan →
-            </button>
-          </>
-        )}
       </div>
     </div>
   );
@@ -889,169 +718,10 @@ export default function App() {
 
       {/* Home page */}
       {page === "home" && (
-        <div className="relative z-10">
-          <section className="max-w-6xl mx-auto px-4 sm:px-6 py-14 sm:py-20 grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
-            <div className="animate-fadeUp">
-              <div className="inline-flex items-center gap-2 bg-blue-500/10 border border-blue-500/25 rounded-full px-4 py-1.5 mb-6">
-                <span className="w-2 h-2 rounded-full bg-blue-400 animate-blink shrink-0"/>
-                <span className="text-xs font-bold text-blue-400 tracking-widest uppercase">AI-Powered · Free · Instant</span>
-              </div>
-              <h1 className="font-display text-4xl sm:text-5xl lg:text-6xl font-extrabold leading-tight tracking-tight mb-5">
-                Will You<br/><span className="bg-gradient-to-r from-blue-400 via-violet-400 to-emerald-400 bg-clip-text text-transparent">Pass This Year?</span>
-              </h1>
-              <p className="text-slate-400 text-base sm:text-lg leading-relaxed mb-8 max-w-lg">
-                Answer a few honest questions. Our AI tells you if you're on track to <strong className="text-white">Pass</strong>, at risk of <strong className="text-orange-400">Failing</strong>, or need urgent help.
-              </p>
-              <div className="flex flex-wrap gap-3 mb-10">
-                <button onClick={startQuiz} className="px-6 py-3.5 rounded-2xl bg-gradient-to-r from-blue-500 to-violet-600 font-bold text-base hover:-translate-y-1 hover:shadow-xl hover:shadow-blue-500/40 transition-all">🔮 Predict My Performance</button>
-                <button onClick={() => smoothScrollTo("how-it-works")} className="px-6 py-3.5 rounded-2xl border border-white/15 font-bold text-base text-slate-300 hover:border-white/30 hover:text-white transition-all">See How It Works</button>
-              </div>
-              <div className="flex gap-8">{[
-                { n: 395, s: "+", l: "Students in dataset" },
-                { n: 81,  s: "%", l: "Model accuracy" },
-                { n: 3,   s: "",  l: "min to complete" },
-              ].map(({ n, s, l }) => (
-                <div key={l}><div className="text-2xl font-extrabold bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent"><Counter target={n} suffix={s}/></div><div className="text-xs text-slate-500 mt-0.5">{l}</div></div>
-              ))}</div>
-            </div>
-            <div className="relative hidden lg:block">
-              <div className="absolute -top-4 right-6 bg-[#0d1220] border border-white/15 rounded-xl px-4 py-2 text-sm font-semibold text-emerald-400 shadow-xl z-10">🎓 Pass · 88% confidence</div>
-              <div className="bg-[#0d1220] border border-white/12 rounded-3xl p-7 shadow-2xl">
-                <div className="flex items-center justify-between mb-5"><span className="font-bold text-sm">Performance Report</span><span className="text-xs font-bold bg-emerald-500/15 text-emerald-400 px-2.5 py-1 rounded-lg">● Live</span></div>
-                {[["Pass","#34d399",88],["Fail","#fb923c",9],["At-Risk","#f87171",3]].map(([l,c,p]) => (
-                  <div key={l} className="flex items-center gap-3 mb-3"><span className="text-xs text-slate-400 w-14 shrink-0">{l}</span><div className="flex-1 h-1.5 bg-white/6 rounded-full overflow-hidden"><div className="h-full rounded-full" style={{width:`${p}%`,background:c}}/></div><span className="text-xs font-bold text-slate-400 w-8 text-right">{p}%</span></div>
-                ))}
-                <div className="flex items-center justify-between pt-4 mt-2 border-t border-white/8 text-xs"><span className="text-emerald-400 font-bold">🎓 Predicted: Pass</span><span className="text-slate-500">RF · 81% acc</span></div>
-              </div>
-              <div className="absolute -bottom-4 left-6 bg-[#0d1220] border border-white/15 rounded-xl px-4 py-2 text-sm font-semibold text-blue-400 shadow-xl">⚡ Powered by Machine Learning</div>
-            </div>
-          </section>
-
-          <div className="px-4 sm:px-6">
-            <QuickPredict onFullQuiz={startQuiz}/>
-          </div>
-
-          <section id="how-it-works" className="max-w-6xl mx-auto px-4 sm:px-6 py-14 border-t border-white/6">
-            <Tag color="violet">How It Works</Tag>
-            <h2 className="font-display text-3xl sm:text-4xl font-extrabold mt-4 mb-10 tracking-tight">Simple. Smart. Honest.</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {[["1","Answer Questions","Tell us about your grades, attendance, family background, and study habits."],["2","AI Analyses","Random Forest model (trained on 395 real students) processes your answers instantly."],["3","Get Prediction","See Pass, Fail, or At-Risk with confidence percentages for each outcome."],["4","Take Action","Get personalised advice on what to change before results are final."]].map(([n,t,d]) => (
-                <div key={n} className="bg-[#0d1220] border border-white/8 rounded-2xl p-6 hover:border-white/15 hover:-translate-y-1 transition-all">
-                  <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center font-extrabold text-sm mb-4">{n}</div>
-                  <h3 className="font-bold text-sm mb-2">{t}</h3><p className="text-xs text-slate-400 leading-relaxed">{d}</p>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section id="tools" className="max-w-6xl mx-auto px-4 sm:px-6 py-14">
-            <Tag color="emerald">Student Toolkit</Tag>
-            <h2 className="font-display text-3xl sm:text-4xl font-extrabold mt-4 mb-10 tracking-tight">More Than a Prediction</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {[
-                ["🔐","Account & Tracking","Save every prediction, build personal history, and track your progress semester to semester.",() => requireAuth()],
-                ["⚖️","Model Compare","See how 5 ML algorithms rank — with honest accuracy numbers, not marketing.",() => navigate("models")],
-                ["📅","Study Scheduler","Feed it your subjects and hours. Get a balanced weekly plan that targets weak spots.",() => navigate("schedule")],
-                ["🤖","Academic Assistant","Instant answers on attendance rules, scholarships, backlogs, and exam prep.",() => navigate("chatbot")],
-              ].map(([e,t,d,fn]) => (
-                <button key={t} onClick={fn} className="group bg-[#0d1220] border border-white/8 rounded-2xl p-6 text-left hover:border-emerald-500/40 hover:-translate-y-1 transition-all">
-                  <div className="text-3xl mb-4">{e}</div>
-                  <h3 className="font-bold text-sm mb-2">{t}</h3>
-                  <p className="text-xs text-slate-400 leading-relaxed group-hover:text-slate-300 transition-colors">{d}</p>
-                  <span className="inline-block text-xs font-bold text-emerald-400 mt-4 group-hover:translate-x-1 transition-transform">Open →</span>
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <section id="stats" className="bg-gradient-to-r from-blue-500/6 to-violet-500/6 border-y border-white/6 py-12">
-            <div className="max-w-6xl mx-auto px-4 sm:px-6 grid grid-cols-2 sm:grid-cols-4 gap-6 text-center">
-              {[
-                { n: 395,  s: "+", l: "Students in training data" },
-                { n: 81,   s: "%", l: "Test accuracy" },
-                { n: 5,    s: "",  l: "ML models compared" },
-                { n: 3,    s: "",  l: "Outcome classes" },
-              ].map(({ n, s, l }) => (
-                <div key={l}><div className="font-display text-3xl sm:text-4xl font-extrabold bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent"><Counter target={n} suffix={s}/></div><div className="text-xs text-slate-400 mt-1.5">{l}</div></div>
-              ))}
-            </div>
-          </section>
-
-          <section id="reviews" className="max-w-6xl mx-auto px-4 sm:px-6 py-14">
-            <Tag color="blue">Student Reviews</Tag>
-            <h2 className="font-display text-3xl sm:text-4xl font-extrabold mt-4 mb-10 tracking-tight">What Students Say</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {[{s:"★★★★★",t:"Predicted At-Risk — I had skipped too many classes and failed 2 courses. Wake-up call I needed.",n:"Arjun K.",r:"B.Tech 2nd Year",e:"👦",c:"from-blue-900/40"},{s:"★★★★★",t:"Predicted Pass with 88% confidence. Questions felt accurate. Really well designed.",n:"Sneha P.",r:"BSc 3rd Year",e:"👧",c:"from-violet-900/40"},{s:"★★★★☆",t:"The Pass/Fail/At-Risk breakdown with percentages was very clear.",n:"Rahul M.",r:"BBA 2nd Year",e:"👦",c:"from-emerald-900/30"},{s:"★★★★★",t:"Free ML tool that actually works. Showed me attendance matters more than I thought.",n:"Priya S.",r:"MBA 1st Year",e:"👧",c:"from-blue-900/40"},{s:"★★★★★",t:"Free and genuinely useful. Impressive that a student built this.",n:"Vikram R.",r:"B.Com Final Year",e:"👦",c:"from-violet-900/40"},{s:"★★★★☆",t:"Asked the right questions — study time, attendance, parent education. Felt relevant.",n:"Meera T.",r:"BCA 2nd Year",e:"👧",c:"from-emerald-900/30"}].map((t,i) => (
-                <div key={i} className={`bg-gradient-to-b ${t.c} to-transparent bg-[#0d1220] border border-white/8 rounded-2xl p-6`}>
-                  <div className="text-yellow-400 text-sm mb-3">{t.s}</div>
-                  <p className="text-sm text-slate-300 leading-relaxed mb-4">"{t.t}"</p>
-                  <div className="flex items-center gap-3 pt-4 border-t border-white/6">
-                    <div className="w-9 h-9 rounded-full bg-white/8 flex items-center justify-center text-base shrink-0">{t.e}</div>
-                    <div><div className="text-sm font-bold">{t.n}</div><div className="text-xs text-slate-500">{t.r}</div></div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="max-w-6xl mx-auto px-4 sm:px-6 pb-16">
-            <div className="bg-gradient-to-br from-blue-500/10 to-violet-500/10 border border-blue-500/20 rounded-3xl p-10 sm:p-14 text-center">
-              <h2 className="font-display text-3xl sm:text-4xl font-extrabold tracking-tight mb-3">Ready to Know Where You Stand?</h2>
-              <p className="text-slate-400 text-base max-w-md mx-auto mb-8">Free, takes a few minutes, and might change how you approach your studies.</p>
-              <button onClick={startQuiz} className="px-8 py-4 rounded-2xl bg-gradient-to-r from-blue-500 to-violet-600 font-bold text-lg hover:-translate-y-1 hover:shadow-2xl hover:shadow-blue-500/40 transition-all">🔮 Start My Prediction</button>
-            </div>
-          </section>
-
-          <section id="why-compare" className="max-w-6xl mx-auto px-4 sm:px-6 py-14 border-t border-white/6">
-            <Tag color="yellow">Why AcademicAI</Tag>
-            <h2 className="font-display text-3xl sm:text-4xl font-extrabold mt-4 mb-10 tracking-tight">Compare. Realize. Act.</h2>
-            <div className="bg-[#0d1220] border border-white/8 rounded-3xl overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm min-w-[560px]">
-                  <thead>
-                    <tr className="bg-white/4 text-left text-xs font-bold uppercase tracking-widest border-b border-white/8">
-                      <th className="py-4 px-5 text-slate-400 font-bold">Feature</th>
-                      <th className="py-4 px-5 text-emerald-400"><span className="bg-emerald-500/15 px-3 py-1 rounded-full">AcademicAI</span></th>
-                      <th className="py-4 px-5 text-slate-500">Wing it</th>
-                      <th className="py-4 px-5 text-blue-300">Ask a friend</th>
-                    </tr>
-                  </thead>
-                  <tbody className="text-slate-300">
-                    {[
-                      ["Know your risk early", "✅", "❌", "🤷"],
-                      ["Confidence percentages", "✅", "❌", "❌"],
-                      ["Personalised action plan", "✅", "❌", "Sometimes"],
-                      ["Track over semesters", "✅", "❌", "❌"],
-                      ["Trained on real student data", "✅ 395 students", "❌", "Survivor bias"],
-                      ["Free & private", "✅", "—", "Could get awkward"],
-                    ].map(([f, a, b, c], i) => (
-                      <tr key={f} className={i > 0 ? "border-t border-white/5" : ""}>
-                        <td className="py-3.5 px-5 font-semibold">{f}</td>
-                        <td className="py-3.5 px-5 text-emerald-400">{a}</td>
-                        <td className="py-3.5 px-5 text-slate-600">{b}</td>
-                        <td className="py-3.5 px-5 text-slate-500">{c}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </section>
-
-          <section id="faq" className="max-w-6xl mx-auto px-4 sm:px-6 py-14 border-t border-white/6">
-            <Tag color="emerald">FAQ</Tag>
-            <h2 className="font-display text-3xl sm:text-4xl font-extrabold mt-4 mb-10 tracking-tight">Common Questions</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {[["Is this free?","Yes, 100% free. No sign-up or email required."],["How accurate is it?","81% test accuracy on real student data."],["What does At-Risk mean?","Students critically at risk of failing or withdrawing entirely."],["How do grade questions work?","They adapt based on which semester you're in — Sem 1 students are asked about 12th/Intermediate marks instead."],["Are grades out of 10?","Yes — select the range matching your marks out of 10 (e.g. 7–8)."],["Can I retake the quiz?","Yes, click Retry on the result page."]].map(([q,a],i) => (
-                <div key={i} className="bg-[#0d1220] border border-white/8 rounded-2xl p-5 hover:border-white/15 transition-all">
-                  <div className="font-bold text-sm mb-2">{q}</div><div className="text-xs text-slate-400 leading-relaxed">{a}</div>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <Footer onNavigate={navigate} onStartQuiz={startQuiz} onScrollTo={handleScrollTo}/>
-        </div>
+        <LazyPage>
+          <LandingPage onStartQuiz={startQuiz} onNavigate={navigate} onAuth={requireAuth} onScrollTo={handleScrollTo} />
+          <Footer onNavigate={navigate} onStartQuiz={startQuiz} onScrollTo={handleScrollTo} />
+        </LazyPage>
       )}
 
       {/* Quiz & Result */}
