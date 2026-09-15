@@ -1,6 +1,6 @@
 
 
-import { useState, useEffect, useCallback, lazy, Suspense } from "react";
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 
 import API_URL, { getToken, getUser, saveAuth, clearAuth } from "./api";
 
@@ -286,6 +286,143 @@ function PageShell({ children, onBack }) {
   );
 }
 
+// ─── Animated counter (counts up when scrolled into view) ─────────────────────
+function Counter({ target, suffix = "", duration = 1400 }) {
+  const [val, setVal] = useState(0);
+  const ref = useRef(null);
+  const started = useRef(false);
+  useEffect(() => {
+    if (!ref.current) return;
+    const obs = new IntersectionObserver(([e]) => {
+      if (e.isIntersecting && !started.current) {
+        started.current = true;
+        const t0 = performance.now();
+        const tick = (now) => {
+          const p = Math.min((now - t0) / duration, 1);
+          setVal(Math.round((1 - Math.pow(1 - p, 3)) * target));
+          if (p < 1) requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+        obs.disconnect();
+      }
+    }, { threshold: 0.5 });
+    obs.observe(ref.current);
+    return () => obs.disconnect();
+  }, [target, duration]);
+  return <span ref={ref}>{val}{suffix}</span>;
+}
+
+// ─── Quick Predict — 3-question teaser on the landing page ────────────────────
+const QUICK_STEPS = [
+  { id: "attendance", icon: "🏫", q: "What's your attendance like?", options: [
+    { v: "above90", l: "Above 90%" }, { v: "75-90", l: "75 – 90%" }, { v: "60-75", l: "60 – 75%" }, { v: "below60", l: "Below 60%" } ] },
+  { id: "studytime", icon: "📖", q: "Weekly study outside class?", options: [
+    { v: "1", l: "< 2 hrs" }, { v: "2", l: "2 – 5 hrs" }, { v: "3", l: "5 – 10 hrs" }, { v: "4", l: "10+ hrs" } ] },
+  { id: "health", icon: "💪", q: "How's your health these days?", options: [
+    { v: "1", l: "Poor" }, { v: "2", l: "Below avg" }, { v: "3", l: "Average" }, { v: "4", l: "Good" }, { v: "5", l: "Great" } ] },
+];
+
+function QuickPredict({ onFullQuiz }) {
+  const [step, setStep] = useState(0);
+  const [answers, setAnswers] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+
+  const cur = QUICK_STEPS[step];
+
+  function pick(v) {
+    const next = { ...answers, [cur.id]: v };
+    setAnswers(next);
+    if (step < QUICK_STEPS.length - 1) setStep(step + 1);
+    else run(next);
+  }
+
+  async function run(next) {
+    setLoading(true); setError(null);
+    const payload = buildPayload(next);
+    try {
+      const res = await fetch(`${API_URL}/predict`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Prediction failed");
+      setResult(await res.json());
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  }
+
+  function reset() { setStep(0); setAnswers({}); setResult(null); setError(null); }
+
+  const barColors = { Pass: "#34d399", Fail: "#fb923c", "At-Risk": "#f87171" };
+
+  return (
+    <div className="max-w-2xl mx-auto -mt-2 relative z-20">
+      <div className="bg-[#0d1220]/95 backdrop-blur-xl border border-white/10 rounded-3xl p-6 sm:p-8 shadow-2xl">
+        {!result && !loading && (
+          <>
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-xs font-bold tracking-widest uppercase text-violet-400">⚡ Quick Predict</p>
+              {step > 0 && <button onClick={reset} className="text-xs text-slate-500 hover:text-slate-300">Reset</button>}
+            </div>
+            <p className="text-xs text-slate-500 mb-5">3 questions · 20 seconds</p>
+            <div className="h-1 bg-white/6 rounded-full overflow-hidden mb-6">
+              <div className="h-full bg-gradient-to-r from-violet-500 to-blue-500 rounded-full transition-all duration-500" style={{ width: `${((step + 1) / QUICK_STEPS.length) * 100}%` }} />
+            </div>
+            <div className="flex items-center gap-3 mb-4">
+              <span className="text-2xl">{cur.icon}</span>
+              <p className="font-bold text-base">{cur.q}</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2.5">
+              {cur.options.map(o => (
+                <button key={o.v} onClick={() => pick(o.v)}
+                  className="py-3.5 px-4 rounded-xl border border-white/10 bg-white/3 text-sm font-semibold text-slate-300 hover:border-violet-500/40 hover:text-white hover:bg-violet-500/10 transition-all">
+                  {o.l}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
+        {loading && (
+          <div className="py-14 text-center">
+            <div className="w-10 h-10 border-2 border-violet-500/20 border-t-violet-400 rounded-full spinner mx-auto mb-4" />
+            <p className="text-slate-400 text-sm">Analysing your profile… ✨</p>
+          </div>
+        )}
+
+        {result && !loading && (
+          <>
+            <div className="flex items-center justify-between mb-4">
+              <p className="text-xs font-bold tracking-widest uppercase text-emerald-500">Your Quick Result</p>
+              <button onClick={reset} className="text-xs text-slate-500 hover:text-slate-300">Re-take →</button>
+            </div>
+            <div className="flex items-center gap-4 mb-5">
+              <span className="text-4xl">{result.emoji}</span>
+              <div>
+                <p className="font-display text-3xl font-extrabold" style={{ color: barColors[result.prediction] }}>{result.prediction}</p>
+                <p className="text-xs text-slate-400">AI confidence: <strong className="text-slate-200">{result.confidence}%</strong></p>
+              </div>
+            </div>
+            <div className="space-y-2 mb-5">
+              {Object.entries(result.confidence_scores || {}).map(([l, p]) => (
+                <div key={l} className="flex items-center gap-3">
+                  <span className="text-xs font-semibold w-16">{l}</span>
+                  <div className="flex-1 h-1.5 bg-white/6 rounded-full overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: `${p}%`, background: barColors[l] }} />
+                  </div>
+                  <span className="text-xs text-slate-400 w-8 text-right">{p}%</span>
+                </div>
+              ))}
+            </div>
+            {error && <div className="mb-4 bg-red-500/10 border border-red-500/30 rounded-xl p-3 text-xs text-red-300">⚠️ {error}</div>}
+            <button onClick={onFullQuiz} className="w-full py-3.5 rounded-xl bg-gradient-to-r from-blue-500 to-violet-600 text-sm font-bold hover:-translate-y-0.5 hover:shadow-lg transition-all">
+              Get my full personalised plan →
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /**
  * ChoiceGrid — hover-only highlight, no persistent selected state shown.
  * Selecting auto-advances the quiz so the card never stays "marked".
@@ -459,12 +596,12 @@ function ResultCard({ result, analysis, onRetry, onHome, onRate }) {
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block shrink-0"/>
           Model trained on {result.dataset_size||"395"} students · Accuracy: {result.model_accuracy} · Random Forest
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-5">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 mt-5">
           <button onClick={onRetry} className="py-3 rounded-xl bg-white/5 border border-white/10 text-sm font-bold hover:bg-white/8 transition-all">Retry</button>
           <button onClick={onHome}  className="py-3 rounded-xl bg-white/5 border border-white/10 text-sm font-bold hover:bg-white/8 transition-all">Home</button>
           <button onClick={onRate}  className="py-3 rounded-xl bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-sm font-bold hover:bg-yellow-500/15 transition-all">Rate Us</button>
-          <button onClick={() => navigator.share?.({title:"AcademicAI Result",text:`My prediction: ${result.prediction} (${result.confidence}% confidence)`}).catch(()=>{})}
-            className="py-3 rounded-xl bg-gradient-to-r from-blue-500 to-violet-600 text-sm font-bold hover:-translate-y-0.5 transition-all">Share</button>
+          <button onClick={async () => { const { downloadShareableCard } = await import("./utils/shareCard"); downloadShareableCard(result); }} className="py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm font-bold hover:bg-emerald-500/15 transition-all">📥 Image</button>
+          <button onClick={async () => { const { generateReport } = await import("./utils/pdfReport"); generateReport(result, analysis); }} className="py-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400 text-sm font-bold hover:bg-blue-500/15 transition-all">📄 PDF</button>
         </div>
       </div>
     </div>
@@ -769,8 +906,12 @@ export default function App() {
                 <button onClick={startQuiz} className="px-6 py-3.5 rounded-2xl bg-gradient-to-r from-blue-500 to-violet-600 font-bold text-base hover:-translate-y-1 hover:shadow-xl hover:shadow-blue-500/40 transition-all">🔮 Predict My Performance</button>
                 <button onClick={() => smoothScrollTo("how-it-works")} className="px-6 py-3.5 rounded-2xl border border-white/15 font-bold text-base text-slate-300 hover:border-white/30 hover:text-white transition-all">See How It Works</button>
               </div>
-              <div className="flex gap-8">{[["395+","Students in dataset"],["81%","Model accuracy"],["~3 min","To complete"]].map(([n,l]) => (
-                <div key={l}><div className="text-2xl font-extrabold bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent">{n}</div><div className="text-xs text-slate-500 mt-0.5">{l}</div></div>
+              <div className="flex gap-8">{[
+                { n: 395, s: "+", l: "Students in dataset" },
+                { n: 81,  s: "%", l: "Model accuracy" },
+                { n: 3,   s: "",  l: "min to complete" },
+              ].map(({ n, s, l }) => (
+                <div key={l}><div className="text-2xl font-extrabold bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent"><Counter target={n} suffix={s}/></div><div className="text-xs text-slate-500 mt-0.5">{l}</div></div>
               ))}</div>
             </div>
             <div className="relative hidden lg:block">
@@ -785,6 +926,10 @@ export default function App() {
               <div className="absolute -bottom-4 left-6 bg-[#0d1220] border border-white/15 rounded-xl px-4 py-2 text-sm font-semibold text-blue-400 shadow-xl">⚡ Powered by Machine Learning</div>
             </div>
           </section>
+
+          <div className="px-4 sm:px-6">
+            <QuickPredict onFullQuiz={startQuiz}/>
+          </div>
 
           <section id="how-it-works" className="max-w-6xl mx-auto px-4 sm:px-6 py-14 border-t border-white/6">
             <Tag color="violet">How It Works</Tag>
@@ -821,8 +966,13 @@ export default function App() {
 
           <section id="stats" className="bg-gradient-to-r from-blue-500/6 to-violet-500/6 border-y border-white/6 py-12">
             <div className="max-w-6xl mx-auto px-4 sm:px-6 grid grid-cols-2 sm:grid-cols-4 gap-6 text-center">
-              {[["395","Students in training data"],["81%","Test accuracy"],["Dynamic","Grade questions"],["3","Outcome classes"]].map(([n,l]) => (
-                <div key={l}><div className="font-display text-3xl sm:text-4xl font-extrabold bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent">{n}</div><div className="text-xs text-slate-400 mt-1.5">{l}</div></div>
+              {[
+                { n: 395,  s: "+", l: "Students in training data" },
+                { n: 81,   s: "%", l: "Test accuracy" },
+                { n: 5,    s: "",  l: "ML models compared" },
+                { n: 3,    s: "",  l: "Outcome classes" },
+              ].map(({ n, s, l }) => (
+                <div key={l}><div className="font-display text-3xl sm:text-4xl font-extrabold bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent"><Counter target={n} suffix={s}/></div><div className="text-xs text-slate-400 mt-1.5">{l}</div></div>
               ))}
             </div>
           </section>
@@ -849,6 +999,42 @@ export default function App() {
               <h2 className="font-display text-3xl sm:text-4xl font-extrabold tracking-tight mb-3">Ready to Know Where You Stand?</h2>
               <p className="text-slate-400 text-base max-w-md mx-auto mb-8">Free, takes a few minutes, and might change how you approach your studies.</p>
               <button onClick={startQuiz} className="px-8 py-4 rounded-2xl bg-gradient-to-r from-blue-500 to-violet-600 font-bold text-lg hover:-translate-y-1 hover:shadow-2xl hover:shadow-blue-500/40 transition-all">🔮 Start My Prediction</button>
+            </div>
+          </section>
+
+          <section id="why-compare" className="max-w-6xl mx-auto px-4 sm:px-6 py-14 border-t border-white/6">
+            <Tag color="yellow">Why AcademicAI</Tag>
+            <h2 className="font-display text-3xl sm:text-4xl font-extrabold mt-4 mb-10 tracking-tight">Compare. Realize. Act.</h2>
+            <div className="bg-[#0d1220] border border-white/8 rounded-3xl overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm min-w-[560px]">
+                  <thead>
+                    <tr className="bg-white/4 text-left text-xs font-bold uppercase tracking-widest border-b border-white/8">
+                      <th className="py-4 px-5 text-slate-400 font-bold">Feature</th>
+                      <th className="py-4 px-5 text-emerald-400"><span className="bg-emerald-500/15 px-3 py-1 rounded-full">AcademicAI</span></th>
+                      <th className="py-4 px-5 text-slate-500">Wing it</th>
+                      <th className="py-4 px-5 text-blue-300">Ask a friend</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-slate-300">
+                    {[
+                      ["Know your risk early", "✅", "❌", "🤷"],
+                      ["Confidence percentages", "✅", "❌", "❌"],
+                      ["Personalised action plan", "✅", "❌", "Sometimes"],
+                      ["Track over semesters", "✅", "❌", "❌"],
+                      ["Trained on real student data", "✅ 395 students", "❌", "Survivor bias"],
+                      ["Free & private", "✅", "—", "Could get awkward"],
+                    ].map(([f, a, b, c], i) => (
+                      <tr key={f} className={i > 0 ? "border-t border-white/5" : ""}>
+                        <td className="py-3.5 px-5 font-semibold">{f}</td>
+                        <td className="py-3.5 px-5 text-emerald-400">{a}</td>
+                        <td className="py-3.5 px-5 text-slate-600">{b}</td>
+                        <td className="py-3.5 px-5 text-slate-500">{c}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </section>
 
